@@ -23,20 +23,58 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command", metavar="COMMAND")
 
-    # draft — create a new blog post job
-    draft = sub.add_parser("draft", help="Create a new blog post draft.")
-    draft.add_argument("--topic", required=True, help="Blog post topic.")
-    draft.add_argument("--notes", default="", help="Work notes or context.")
-    draft.add_argument("--diff", dest="diff_path", metavar="PATH", help="Path to a local git diff file.")
-    draft.add_argument("--pr-url", metavar="URL", help="GitHub PR URL to use as grounding.")
+    # draft — generate a new blog post from a diff and/or topic
+    draft = sub.add_parser("draft", help="Generate a new blog post draft.")
+    draft.add_argument(
+        "--diff",
+        dest="diff_path",
+        metavar="PATH",
+        help="Path to a local git diff file. Provides code grounding for generation.",
+    )
+    draft.add_argument(
+        "--topic",
+        default="",
+        help="Blog post topic or angle (optional when --diff is provided).",
+    )
+    draft.add_argument("--notes", default="", help="Work notes or additional context.")
+    draft.add_argument(
+        "--pr-url", metavar="URL", help="GitHub PR URL to use as grounding (Phase 2)."
+    )
+    draft.add_argument(
+        "--files",
+        metavar="PATH",
+        nargs="+",
+        help="Narrow diff scope to specific file paths.",
+    )
+    draft.add_argument(
+        "--force",
+        action="store_true",
+        help="Generate even if is_single_topic check fails.",
+    )
+    draft.add_argument(
+        "--auto-approve",
+        action="store_true",
+        help="Skip the interactive [y/N] content approval prompt.",
+    )
 
-    # review — show the current draft for review
+    # calibrate — fetch recent posts and build a tone fingerprint
+    calibrate = sub.add_parser(
+        "calibrate",
+        help="Fetch recent posts and calibrate tone fingerprint (~/.brewpress/tone.json).",
+    )
+    calibrate.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-calibrate even if tone.json already exists.",
+    )
+
+    # review — display the current draft
     sub.add_parser("review", help="Display the current draft for review.")
 
     # approve-content — mark content approved (step 1 of 2)
     sub.add_parser("approve-content", help="Approve the content (step 1 of 2).")
 
-    # approve-publish — send to WordPress; --live publishes immediately
+    # approve-publish — send to WordPress (step 2 of 2)
     approve_publish = sub.add_parser(
         "approve-publish",
         help="Approve and send to WordPress (step 2 of 2). Default: draft.",
@@ -54,6 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate_draft_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Require at least --diff or --topic for the draft subcommand."""
+    if not args.diff_path and not args.topic:
+        parser.error("draft requires at least one of --diff or --topic.")
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -66,6 +110,9 @@ def main() -> int:
     if args.command is None:
         parser.print_help()
         return 0
+
+    if args.command == "draft":
+        _validate_draft_args(args, parser)
 
     # Subcommand stubs — each will delegate to an agent in a later stack.
     print(f"[brewpress] '{args.command}' is not yet implemented.")
