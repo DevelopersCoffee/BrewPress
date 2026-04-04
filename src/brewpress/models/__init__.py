@@ -22,14 +22,14 @@ Transitions:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class JobState(str, Enum):
+class JobState(StrEnum):
     DRAFT = "draft"
     REVIEWED = "reviewed"
     APPROVED_STEP_1 = "approved_step_1"
@@ -37,7 +37,7 @@ class JobState(str, Enum):
     REJECTED = "rejected"
 
 
-class JobIntent(str, Enum):
+class JobIntent(StrEnum):
     NEW_POST = "new_post"
     UPDATE_POST = "update_post"
 
@@ -48,7 +48,7 @@ class BlogJob(BaseModel):
     schema_version: int = 1
     job_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     generated_at: str = Field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     state: JobState = JobState.DRAFT
     intent: JobIntent = JobIntent.NEW_POST
@@ -80,7 +80,7 @@ class BlogJob(BaseModel):
     # State transitions — each returns a new immutable BlogJob instance.  #
     # ------------------------------------------------------------------ #
 
-    def mark_reviewed(self) -> "BlogJob":
+    def mark_reviewed(self) -> BlogJob:
         """Transition DRAFT → REVIEWED after generation output is shown."""
         if self.state != JobState.DRAFT:
             raise ValueError(
@@ -88,7 +88,7 @@ class BlogJob(BaseModel):
             )
         return self.model_copy(update={"state": JobState.REVIEWED})
 
-    def approve_content(self) -> "BlogJob":
+    def approve_content(self) -> BlogJob:
         """Transition REVIEWED → APPROVED_STEP_1 (content approval, step 1 of 2)."""
         if self.state != JobState.REVIEWED:
             raise ValueError(
@@ -98,11 +98,11 @@ class BlogJob(BaseModel):
         return self.model_copy(
             update={
                 "state": JobState.APPROVED_STEP_1,
-                "content_approved_at": datetime.now(timezone.utc).isoformat(),
+                "content_approved_at": datetime.now(UTC).isoformat(),
             }
         )
 
-    def approve_publish(self) -> "BlogJob":
+    def approve_publish(self) -> BlogJob:
         """Transition APPROVED_STEP_1 → APPROVED_STEP_2 (publish approval, step 2 of 2)."""
         if self.state != JobState.APPROVED_STEP_1:
             raise ValueError(
@@ -117,11 +117,11 @@ class BlogJob(BaseModel):
         return self.model_copy(
             update={
                 "state": JobState.APPROVED_STEP_2,
-                "publish_approved_at": datetime.now(timezone.utc).isoformat(),
+                "publish_approved_at": datetime.now(UTC).isoformat(),
             }
         )
 
-    def reject(self, reason: str = "") -> "BlogJob":
+    def reject(self, reason: str = "") -> BlogJob:
         """Transition any non-terminal state → REJECTED."""
         if self.state in (JobState.APPROVED_STEP_2, JobState.REJECTED):
             raise ValueError(
@@ -136,6 +136,6 @@ class BlogJob(BaseModel):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "BlogJob":
+    def from_json(cls, data: dict[str, Any]) -> BlogJob:
         """Deserialize from a JSON-compatible dict."""
         return cls.model_validate(data)

@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
-import warnings
 from dataclasses import dataclass
-
 
 _ALL_VARS: tuple[str, ...] = (
     "WP_URL",
@@ -48,7 +46,7 @@ def load_config(
     """
     missing = [k for k in required if not os.environ.get(k, "").strip()]
     if missing:
-        raise EnvironmentError(
+        raise OSError(
             f"Missing required environment variables: {', '.join(missing)}. "
             "Copy .env.example to .env and fill in real values."
         )

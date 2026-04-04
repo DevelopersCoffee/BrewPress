@@ -14,7 +14,6 @@ from pathlib import Path
 
 from brewpress.models import BlogJob
 
-
 _DEFAULT_STATE_DIR = Path.home() / ".brewpress"
 _DEFAULT_STATE_FILE = _DEFAULT_STATE_DIR / "last_draft.json"
 

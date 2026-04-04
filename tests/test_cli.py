@@ -6,7 +6,6 @@ import pytest
 
 from brewpress.cli import build_parser, main
 
-
 # ------------------------------------------------------------------ #
 # draft — argument validation                                          #
 # ------------------------------------------------------------------ #

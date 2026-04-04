@@ -6,7 +6,6 @@ import pytest
 
 from brewpress.models import BlogJob, JobIntent, JobState
 
-
 # ------------------------------------------------------------------ #
 # Construction                                                         #
 # ------------------------------------------------------------------ #

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import pytest
 
 from brewpress.config import BrewPressConfig, load_config
