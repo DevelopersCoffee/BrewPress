@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Local config and secrets
+.env
+.env.*
+config.local.*
+secrets/
+
+# Runtime outputs
+artifacts/
+tmp/
+*.log
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Playwright / browser caches
+playwright-report/
+test-results/

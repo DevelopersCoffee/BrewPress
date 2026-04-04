@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brewpress"
+version = "1.0.0"
+description = "ADK-powered technical blog generation and WordPress publishing for DevelopersCoffee"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+  { name = "DevelopersCoffee" }
+]
+keywords = [
+  "adk",
+  "agents",
+  "wordpress",
+  "seo",
+  "blog-automation",
+  "developer-tools"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+  "Topic :: Software Development :: Libraries :: Python Modules"
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0.0",
+  "ruff>=0.5.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/DevelopersCoffee/BrewPress"
+Repository = "https://github.com/DevelopersCoffee/BrewPress"
+Issues = "https://github.com/DevelopersCoffee/BrewPress/issues"
+
+[project.scripts]
+brewpress = "brewpress.cli:main"
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
