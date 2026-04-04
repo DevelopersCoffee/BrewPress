@@ -22,3 +22,6 @@ Please take extra care around:
 - keep local credentials outside version control
 - prefer draft-first publishing
 - keep execution steps observable
+- use environment variables or secure secret stores for all credentials
+- redact secrets from logs, screenshots, artifacts, and failure bundles
+- use standard secure WordPress REST authentication only
