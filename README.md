@@ -103,9 +103,9 @@ This repo uses a single shared skills source at `.agents/skills`, symlinked into
 
 Implementation should follow:
 
-1. [docs/final-prd.md](/Users/udaychauhan/workspace/developerscoffee.com/docs/final-prd.md)
-2. [docs/gstack-delivery-plan.md](/Users/udaychauhan/workspace/developerscoffee.com/docs/gstack-delivery-plan.md)
-3. [docs/claude-handoff.md](/Users/udaychauhan/workspace/developerscoffee.com/docs/claude-handoff.md)
+1. `docs/final-prd.md`
+2. `docs/gstack-delivery-plan.md`
+3. `docs/claude-handoff.md`
 
 ## Roadmap
 
