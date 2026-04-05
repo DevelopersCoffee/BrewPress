@@ -198,6 +198,40 @@ def test_parse_strips_plain_fence() -> None:
     assert schema.slug == _valid_draft_dict()["slug"]
 
 
+def test_parse_json_with_inner_code_fences() -> None:
+    """Regression: JSON body containing fenced code blocks (e.g. ```java)
+    must not confuse the fence-stripping logic and cause an empty extraction."""
+    body_with_code = (
+        "## Introduction\n\n"
+        "Java is a language.\n\n"
+        "```java\n"
+        "public class Hello {\n"
+        "    public static void main(String[] args) {\n"
+        '        System.out.println("Hello");\n'
+        "    }\n"
+        "}\n"
+        "```\n\n"
+        "That is it."
+    )
+    d = _valid_draft_dict(draft_body_md=body_with_code)
+    # Simulate the model wrapping the full JSON in a ```json fence — the
+    # inner ```java block used to cause the non-greedy regex to terminate
+    # early, returning an empty string and raising ValueError at char 0.
+    raw = f"```json\n{json.dumps(d)}\n```"
+    schema = parse_draft_response(raw)
+    assert schema.title == d["title"]
+    assert "```java" in schema.draft_body_md
+
+
+def test_parse_bare_json_with_inner_code_fences() -> None:
+    """Same regression but with bare JSON (no outer fence) — _extract_json
+    fast-path must return the full object when the body has code blocks."""
+    body_with_code = "## Intro\n\n```python\nprint('hi')\n```\n"
+    d = _valid_draft_dict(draft_body_md=body_with_code)
+    schema = parse_draft_response(json.dumps(d))
+    assert "```python" in schema.draft_body_md
+
+
 # ------------------------------------------------------------------ #
 # parse_draft_response — clamping and error handling                  #
 # ------------------------------------------------------------------ #

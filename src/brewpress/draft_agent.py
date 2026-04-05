@@ -39,7 +39,7 @@ from brewpress.work_ingestion import WorkContext
 # Model selection                                                      #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
+_DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 
 # ------------------------------------------------------------------ #
 # Style grounding                                                      #
@@ -207,14 +207,46 @@ def build_prompt(ctx: WorkContext) -> str:
 # Response parsing                                                     #
 # ------------------------------------------------------------------ #
 
-# Gemini JSON mode returns clean JSON, but sometimes wraps it in a
-# markdown fence — strip that before parsing.
-_JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
+# Gemini may wrap its JSON response in a markdown fence.  The greedy outer
+# fence regex is intentionally avoided here because the JSON body itself can
+# contain fenced code blocks (e.g. ```java … ```), which would cause a
+# non-greedy inner match to terminate early and return an empty / partial
+# string.  Instead we locate the outermost { … } span after stripping any
+# fence header.
+_JSON_FENCE_HEADER_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
 
 
 def _extract_json(raw: str) -> str:
-    m = _JSON_FENCE_RE.search(raw)
-    return m.group(1) if m else raw.strip()
+    """Return the first complete JSON object found in *raw*.
+
+    Handles three response shapes:
+      1. Bare JSON object (most common with response_mime_type=application/json).
+      2. JSON object wrapped in a ```json … ``` markdown fence.
+      3. Any other text with an embedded JSON object.
+    """
+    # Strip BOM and surrounding whitespace.
+    text = raw.strip().lstrip("\ufeff").strip()
+
+    # Fast path: already a bare JSON object.
+    if text.startswith("{"):
+        return text
+
+    # Strip a leading fence header (``` or ```json) so the remainder starts
+    # at the opening brace, then fall through to the { … } extractor below.
+    text = _JSON_FENCE_HEADER_RE.sub("", text, count=1).strip()
+    if text.startswith("{"):
+        # Strip a trailing ``` fence closer if present.
+        if text.endswith("```"):
+            text = text[: text.rfind("```")].rstrip()
+        return text
+
+    # Last resort: find the outermost { … } span in whatever was returned.
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start : end + 1]
+
+    return text
 
 
 def parse_draft_response(raw: str) -> DraftSchema:
