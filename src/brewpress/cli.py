@@ -149,7 +149,73 @@ def main() -> int:
     if args.command == "draft":
         _validate_draft_args(args, parser)
 
-    # Subcommand stubs — each will delegate to an agent in a later stack.
+    # ---------------------------------------------------------------- #
+    # Review-loop commands — wired to ReviewGate                        #
+    # ---------------------------------------------------------------- #
+
+    if args.command == "review":
+        from brewpress.review_gate import ReviewGate, format_draft
+        try:
+            job = ReviewGate().review()
+            print(format_draft(job))
+            return 0
+        except FileNotFoundError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "revise":
+        from brewpress.review_gate import ReviewGate
+        try:
+            ReviewGate().revise(args.instruction)
+            print(
+                "[brewpress] Revision recorded. "
+                "Run 'brewpress draft' to regenerate with this instruction."
+            )
+            return 0
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "approve-content":
+        from brewpress.review_gate import ReviewGate
+        try:
+            ReviewGate().approve_content()
+            print(
+                "[brewpress] Content approved (step 1 of 2). "
+                "Run 'brewpress approve-publish' to queue for WordPress."
+            )
+            return 0
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "approve-publish":
+        from brewpress.review_gate import ReviewGate
+        try:
+            job = ReviewGate().approve_publish(live=args.live)
+            dest = "live publish" if job.publish_live else "WordPress draft"
+            print(
+                f"[brewpress] Approved for {dest} (step 2 of 2). "
+                "WordPress client will be wired in Stack 6."
+            )
+            return 0
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+    if args.command == "reject":
+        from brewpress.review_gate import ReviewGate
+        try:
+            ReviewGate().reject(reason=args.reason)
+            print("[brewpress] Draft rejected and discarded.")
+            return 0
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+    # ---------------------------------------------------------------- #
+    # Remaining stubs — implementation arrives in later stacks          #
+    # ---------------------------------------------------------------- #
     print(f"[brewpress] '{args.command}' is not yet implemented.")
     return 0
 
