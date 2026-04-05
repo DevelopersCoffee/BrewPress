@@ -45,7 +45,9 @@ full ADK multi-agent (B).
 | Approach B | ADK multi-agent orchestration | Right long-term architecture, but a liability before generation quality is proven. |
 
 **Stack mapping:** Stacks 1–6 are Approach A. Stack 4 refactor is Approach C.
-Stack 8 is Approach B.
+Stack 8 ships the `Orchestrator` (still Approach A: single-agent pipeline wiring).
+Full ADK multi-agent Approach B is deferred — the single-agent pipeline must be
+proven on real posts before the orchestration layer is replaced.
 
 ---
 
