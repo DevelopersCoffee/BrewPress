@@ -57,6 +57,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip the interactive [y/N] content approval prompt.",
     )
 
+    # suggest — surface topic and keyword ideas from trend signals
+    suggest = sub.add_parser(
+        "suggest",
+        help="Suggest blog topics and keywords using trend signals.",
+    )
+    suggest.add_argument(
+        "--topic",
+        metavar="KEYWORD",
+        nargs="+",
+        help="Seed keywords to evaluate (e.g. 'spring boot' 'ai agents').",
+    )
+    suggest.add_argument(
+        "--region",
+        default="US",
+        metavar="CC",
+        help="ISO 3166-1 alpha-2 region code (default: US).",
+    )
+    suggest.add_argument(
+        "--count",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Maximum number of suggestions to return (default: 5).",
+    )
+
     # calibrate — fetch recent posts and build a tone fingerprint
     calibrate = sub.add_parser(
         "calibrate",
