@@ -154,17 +154,34 @@ class ReviewGate:
     # approve_content                                                    #
     # ---------------------------------------------------------------- #
 
+    # Minimum quality_score required to approve content (PRD §Quality Gate).
+    # A draft below this threshold is not considered publish-ready.
+    MIN_QUALITY_SCORE: int = 60
+
     def approve_content(self) -> BlogJob:
         """Transition REVIEWED → APPROVED_STEP_1 (content approval, step 1 of 2).
+
+        Enforces the PRD quality gate: rejects approval when quality_score
+        is set and falls below MIN_QUALITY_SCORE (default 60).
 
         Returns:
             The job in APPROVED_STEP_1 state with content_approved_at set.
 
         Raises:
             FileNotFoundError: No draft exists.
-            ValueError: Job is not in REVIEWED state.
+            ValueError: Job is not in REVIEWED state, or quality_score is
+                        below the minimum threshold.
         """
         job = self._store.load()
+        if (
+            job.quality_score is not None
+            and job.quality_score < self.MIN_QUALITY_SCORE
+        ):
+            raise ValueError(
+                f"Quality score {job.quality_score}/100 is below the minimum "
+                f"{self.MIN_QUALITY_SCORE}. Run 'brewpress revise' to improve "
+                "the draft before approving."
+            )
         job = job.approve_content()
         self._store.save(job)
         return job
@@ -197,18 +214,22 @@ class ReviewGate:
     # reject                                                             #
     # ---------------------------------------------------------------- #
 
-    def reject(self, reason: str = "") -> BlogJob:
+    def reject(self, reason: str = "", force: bool = False) -> BlogJob:
         """Transition any non-terminal state → REJECTED.
+
+        Args:
+            reason: Optional human-readable rejection reason.
+            force:  When True, allow rejection from APPROVED_STEP_2.
 
         Returns:
             The job in REJECTED state.
 
         Raises:
             FileNotFoundError: No draft exists.
-            ValueError: Job is already in a terminal state.
+            ValueError: Invalid state transition (see BlogJob.reject).
         """
         job = self._store.load()
-        job = job.reject(reason=reason)
+        job = job.reject(reason=reason, force=force)
         self._store.save(job)
         return job
 

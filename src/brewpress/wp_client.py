@@ -26,6 +26,7 @@ to support interactive disambiguation when AmbiguousMatchError is raised.
 from __future__ import annotations
 
 import json
+import mimetypes
 from pathlib import Path
 from typing import Any
 
@@ -172,6 +173,14 @@ class WordPressClient:
     # Low-level HTTP                                                     #
     # ---------------------------------------------------------------- #
 
+    _MIME_OVERRIDES = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+    }
+
     def _url(self, path: str) -> str:
         return f"{self._base}/wp-json/wp/v2/{path}"
 
@@ -189,6 +198,47 @@ class WordPressClient:
         resp = self._session.put(self._url(path), json=data, timeout=_TIMEOUT)
         resp.raise_for_status()
         return resp.json()
+
+    # ---------------------------------------------------------------- #
+    # Media upload                                                       #
+    # ---------------------------------------------------------------- #
+
+    def upload_image_file(self, path: Path) -> int:
+        """Upload a local image to the WP media library.
+
+        Args:
+            path: Local file path to the image.
+
+        Returns:
+            WP media object ID (integer) for use as ``featured_media``.
+
+        Raises:
+            PublishError: On any network or HTTP error during upload.
+        """
+        ext = path.suffix.lower()
+        content_type = self._MIME_OVERRIDES.get(ext)
+        if content_type is None:
+            guessed, _ = mimetypes.guess_type(str(path))
+            content_type = guessed or "application/octet-stream"
+
+        try:
+            upload_session = requests.Session()
+            upload_session.auth = self._session.auth
+            resp = upload_session.post(
+                self._url("media"),
+                headers={
+                    "Content-Disposition": f'attachment; filename="{path.name}"',
+                    "Content-Type": content_type,
+                },
+                data=path.read_bytes(),
+                timeout=_TIMEOUT,
+            )
+            resp.raise_for_status()
+            return int(resp.json()["id"])
+        except requests.RequestException as exc:
+            raise PublishError(
+                f"Failed to upload featured image {path.name}: {exc}"
+            ) from exc
 
     # ---------------------------------------------------------------- #
     # Taxonomy resolution                                               #
@@ -277,16 +327,22 @@ class WordPressClient:
     # Payload construction                                              #
     # ---------------------------------------------------------------- #
 
-    def _build_payload(self, job: BlogJob, status: str) -> dict[str, Any]:
+    def _build_payload(
+        self,
+        job: BlogJob,
+        status: str,
+        featured_media_id: int | None = None,
+    ) -> dict[str, Any]:
         """Build the WP REST API post payload from a BlogJob.
 
         Uses plugin-independent fields only:
-        title, content (HTML), excerpt, slug, status, tags, categories.
+        title, content (HTML), excerpt, slug, status, tags, categories,
+        and optionally featured_media.
         """
         tag_ids = self._resolve_terms(job.tags, "tags") if job.tags else []
         cat_ids = self._resolve_terms(job.categories, "categories") if job.categories else []
 
-        return {
+        payload: dict[str, Any] = {
             "title": job.title,
             "content": _md_to_html(job.draft_body_md),
             "excerpt": job.excerpt or job.meta_description,
@@ -295,17 +351,29 @@ class WordPressClient:
             "tags": tag_ids,
             "categories": cat_ids,
         }
+        if featured_media_id is not None:
+            payload["featured_media"] = featured_media_id
+        return payload
 
     # ---------------------------------------------------------------- #
     # Publish                                                           #
     # ---------------------------------------------------------------- #
 
-    def publish(self, job: BlogJob) -> BlogJob:
+    def publish(
+        self,
+        job: BlogJob,
+        featured_media_id: int | None = None,
+    ) -> BlogJob:
         """Create or update a WP post from a BlogJob.
 
         Determines create vs update via find_post().  Sets the post status
         to "publish" when job.publish_live is True, "draft" otherwise.
         Never infers live publish — only acts on job.publish_live.
+
+        Args:
+            job:               BlogJob to publish.
+            featured_media_id: WP media object ID to set as featured image.
+                               When None, no featured image is set.
 
         Returns:
             Updated BlogJob with wp_post_id set.
@@ -319,7 +387,7 @@ class WordPressClient:
 
         try:
             existing_id = self.find_post(job)
-            payload = self._build_payload(job, status)
+            payload = self._build_payload(job, status, featured_media_id=featured_media_id)
 
             if existing_id is not None:
                 result = self._put(f"posts/{existing_id}", payload)

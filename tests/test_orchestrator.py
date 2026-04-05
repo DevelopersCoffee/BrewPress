@@ -382,7 +382,7 @@ def test_publish_calls_wp_client_with_job(tmp_path: Path) -> None:
     orc = Orchestrator(store=store, wp_client=wp)
     orc.publish()
 
-    wp.publish.assert_called_once_with(approved)
+    wp.publish.assert_called_once_with(approved, featured_media_id=None)
 
 
 def test_publish_builds_client_from_config_when_not_injected(tmp_path: Path) -> None:
@@ -507,3 +507,88 @@ def test_no_wp_calls_in_draft(tmp_path: Path) -> None:
         orc.draft(topic="Topic")
 
     wp.publish.assert_not_called()
+
+
+# ------------------------------------------------------------------ #
+# is_code_post tagging                                                 #
+# ------------------------------------------------------------------ #
+
+
+def test_draft_tags_is_code_post_true_when_context_is_code_post(tmp_path: Path) -> None:
+    draft_job = _job()
+    agent = _make_draft_agent(draft_job)
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest, \
+         patch("brewpress.orchestrator.run_commands") as mock_run, \
+         patch("brewpress.orchestrator.generate_for_code_post") as mock_gen, \
+         patch("brewpress.orchestrator.validate_code_post_media") as mock_val:
+
+        ctx = MagicMock()
+        ctx.is_code_post = True
+        ctx.commands = ["mvn test"]
+        mock_ingest.return_value = ctx
+        mock_run.return_value = _empty_trace()
+        mock_gen.return_value = MediaManifest(job_id="j1", items=[])
+        mock_val.return_value = []
+
+        orc = Orchestrator(store=store, draft_agent=agent)
+        result = orc.draft(topic="", diff_path="fake.diff")
+
+    assert result.job.is_code_post is True
+
+
+def test_draft_tags_is_code_post_false_for_regular_post(tmp_path: Path) -> None:
+    draft_job = _job()
+    agent = _make_draft_agent(draft_job)
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest:
+        ctx = MagicMock()
+        ctx.is_code_post = False
+        ctx.commands = []
+        mock_ingest.return_value = ctx
+
+        orc = Orchestrator(store=store, draft_agent=agent)
+        result = orc.draft(topic="Topic")
+
+    assert result.job.is_code_post is False
+
+
+# ------------------------------------------------------------------ #
+# auto_approve                                                         #
+# ------------------------------------------------------------------ #
+
+
+def test_draft_auto_approve_returns_approved_step_1(tmp_path: Path) -> None:
+    draft_job = _job(quality_score=80)
+    agent = _make_draft_agent(draft_job)
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest:
+        ctx = MagicMock()
+        ctx.is_code_post = False
+        ctx.commands = []
+        mock_ingest.return_value = ctx
+
+        orc = Orchestrator(store=store, draft_agent=agent)
+        result = orc.draft(topic="Topic", auto_approve=True)
+
+    assert result.job.state == JobState.APPROVED_STEP_1
+
+
+def test_draft_without_auto_approve_returns_reviewed(tmp_path: Path) -> None:
+    draft_job = _job()
+    agent = _make_draft_agent(draft_job)
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest:
+        ctx = MagicMock()
+        ctx.is_code_post = False
+        ctx.commands = []
+        mock_ingest.return_value = ctx
+
+        orc = Orchestrator(store=store, draft_agent=agent)
+        result = orc.draft(topic="Topic", auto_approve=False)
+
+    assert result.job.state == JobState.REVIEWED

@@ -212,10 +212,16 @@ def test_reject_empty_reason() -> None:
     assert job.rejected_reason == ""
 
 
-def test_reject_terminal_state_raises() -> None:
+def test_reject_approved_step_2_raises_without_force() -> None:
     job = BlogJob().mark_reviewed().approve_content().approve_publish()
-    with pytest.raises(ValueError, match="terminal"):
+    with pytest.raises(ValueError, match="--force"):
         job.reject()
+
+
+def test_reject_approved_step_2_with_force() -> None:
+    job = BlogJob().mark_reviewed().approve_content().approve_publish()
+    result = job.reject(force=True)
+    assert result.state == JobState.REJECTED
 
 
 def test_reject_already_rejected_raises() -> None:

@@ -14,7 +14,6 @@ WordPress Application Passwords) must be quoted in .env:
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -78,10 +77,10 @@ def load_config(
 
     wp_url = os.environ.get("WP_URL", "").strip().rstrip("/") or None
     if wp_url and not wp_url.startswith("https://"):
-        print(
-            "Warning: WP_URL does not use HTTPS. WordPress credentials will be "
-            "transmitted in plaintext. Update WP_URL to https:// before use.",
-            file=sys.stderr,
+        raise OSError(
+            "WP_URL must use HTTPS. WordPress Application Passwords transmit "
+            "credentials in plaintext over HTTP. "
+            "Update WP_URL to https:// before publishing."
         )
 
     return BrewPressConfig(

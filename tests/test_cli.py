@@ -66,15 +66,32 @@ def test_draft_files_flag() -> None:
 # ------------------------------------------------------------------ #
 
 
-def test_calibrate_stub(capsys: pytest.CaptureFixture[str]) -> None:
+def test_calibrate_writes_tone_json(tmp_path: pytest.fixture, capsys: pytest.CaptureFixture[str]) -> None:
+    """calibrate fetches WP posts and writes tone.json."""
     import sys
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from brewpress.config import BrewPressConfig
+
+    mock_posts = [{"id": 1, "title": {"rendered": "Post One"}, "slug": "post-one", "date": "2024-01-01", "excerpt": {"rendered": ""}}]
+    mock_client = MagicMock()
+    mock_client._get.return_value = mock_posts
+
+    mock_config = BrewPressConfig(wp_url="https://example.com", wp_username="admin", wp_app_password="pass")
+
     sys.argv = ["brewpress", "calibrate"]
     from brewpress.cli import main as _main
-    rc = _main()
+    with (
+        patch("brewpress.config.load_config", return_value=mock_config),
+        patch("brewpress.wp_client.WordPressClient", return_value=mock_client),
+        patch("pathlib.Path.home", return_value=Path(tmp_path)),
+    ):
+        rc = _main()
+
     assert rc == 0
     out = capsys.readouterr().out
-    assert "calibrate" in out
-    assert "not yet implemented" in out
+    assert "tone" in out.lower() or "post" in out.lower()
 
 
 def test_calibrate_force_flag() -> None:
