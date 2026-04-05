@@ -242,6 +242,15 @@ def main() -> int:
             bundle_dir = Path.home() / ".brewpress" / "bundles"
             print(f"[brewpress] WordPress publish failed: {exc}", file=sys.stderr)
             print(f"[brewpress] Failure bundle written to {bundle_dir}/", file=sys.stderr)
+            try:
+                ReviewGate().rollback_publish_approval()
+                print(
+                    "[brewpress] State rolled back to approved_step_1. "
+                    "Run 'brewpress approve-publish' to retry.",
+                    file=sys.stderr,
+                )
+            except (FileNotFoundError, ValueError):
+                pass
             return 1
         except (FileNotFoundError, ValueError) as exc:
             print(f"[brewpress] {exc}", file=sys.stderr)

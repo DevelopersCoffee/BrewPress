@@ -373,6 +373,59 @@ def test_reject_approved_step_2_raises(tmp_path: Path) -> None:
         gate.reject()
 
 
+def test_rollback_publish_approval_resets_to_approved_step_1(tmp_path: Path) -> None:
+    """Regression: when a publish attempt fails, the orchestrator must be able
+    to roll the job back from APPROVED_STEP_2 → APPROVED_STEP_1 so the user
+    can retry or reject without being stuck."""
+    fully_approved = _draft_job().mark_reviewed().approve_content().approve_publish()
+    gate = _gate(tmp_path, fully_approved)
+    job = gate.rollback_publish_approval()
+    assert job.state == JobState.APPROVED_STEP_1
+
+
+def test_rollback_publish_approval_persists(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    fully_approved = _draft_job().mark_reviewed().approve_content().approve_publish()
+    store.save(fully_approved)
+    ReviewGate(store=store).rollback_publish_approval()
+    assert store.load().state == JobState.APPROVED_STEP_1
+
+
+def test_rollback_publish_approval_raises_when_not_in_step_2(tmp_path: Path) -> None:
+    gate = _gate(tmp_path, _draft_job().mark_reviewed().approve_content())
+    with pytest.raises(ValueError, match="APPROVED_STEP_2"):
+        gate.rollback_publish_approval()
+
+
+def test_approve_publish_cli_rolls_back_state_on_publish_error(
+    tmp_path: Path,
+) -> None:
+    """Regression: CLI approve-publish must roll state back to APPROVED_STEP_1
+    when the WordPress publish call raises PublishError, leaving the job in a
+    retryable state rather than stuck in APPROVED_STEP_2."""
+    from unittest.mock import patch
+
+    from brewpress.wp_client import PublishError
+
+    approved = _draft_job().mark_reviewed().approve_content().approve_publish()
+    store = _store(tmp_path)
+    store.save(approved.model_copy(update={"state": approved.state.__class__["APPROVED_STEP_1"]}))
+
+    # Put job in APPROVED_STEP_1 so approve-publish can transition it
+    step1 = _draft_job().mark_reviewed().approve_content()
+    store.save(step1)
+
+    with (
+        patch("brewpress.orchestrator.Orchestrator.publish", side_effect=PublishError("boom")),
+        patch("brewpress.config.load_config"),
+        patch("brewpress.review_gate.StateStore", return_value=store),
+    ):
+        rc, _, stderr = _run_cli(["approve-publish"], tmp_path, initial=None)
+
+    assert rc == 1
+    assert store.load().state == JobState.APPROVED_STEP_1
+
+
 def test_reject_raises_when_no_draft(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         ReviewGate(store=_store(tmp_path)).reject()

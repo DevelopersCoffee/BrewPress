@@ -33,6 +33,7 @@ from brewpress.models import BlogJob
 from brewpress.review_gate import ReviewGate
 from brewpress.state_store import StateStore
 from brewpress.work_ingestion import WorkContext, ingest
+from brewpress.wordpress.agent import WordPressAgent
 from brewpress.wp_client import (
     AmbiguousMatchError,
     PublishError,
@@ -80,11 +81,13 @@ class Orchestrator:
         store: StateStore | None = None,
         draft_agent: DraftAgent | None = None,
         wp_client: WordPressClient | None = None,
+        wp_agent: WordPressAgent | None = None,
         media_base: Path | None = None,
     ) -> None:
         self._store = store or StateStore()
         self._draft_agent = draft_agent
         self._wp_client = wp_client
+        self._wp_agent = wp_agent
         self._media_base = media_base or _DEFAULT_MEDIA_BASE
 
     # ---------------------------------------------------------------- #

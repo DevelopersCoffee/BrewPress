@@ -211,3 +211,33 @@ class ReviewGate:
         job = job.reject(reason=reason)
         self._store.save(job)
         return job
+
+    # ---------------------------------------------------------------- #
+    # rollback_publish_approval                                          #
+    # ---------------------------------------------------------------- #
+
+    def rollback_publish_approval(self) -> BlogJob:
+        """Roll back APPROVED_STEP_2 → APPROVED_STEP_1 after a failed publish.
+
+        Called by the CLI when the WordPress publish request raises
+        PublishError, so the job is left in a retryable state rather than
+        stuck in APPROVED_STEP_2 indefinitely.
+
+        Returns:
+            The job restored to APPROVED_STEP_1.
+
+        Raises:
+            FileNotFoundError: No draft exists.
+            ValueError: Job is not in APPROVED_STEP_2.
+        """
+        from brewpress.models import JobState
+
+        job = self._store.load()
+        if job.state != JobState.APPROVED_STEP_2:
+            raise ValueError(
+                f"rollback_publish_approval() requires state APPROVED_STEP_2, "
+                f"got {job.state.value!r}."
+            )
+        job = job.model_copy(update={"state": JobState.APPROVED_STEP_1})
+        self._store.save(job)
+        return job

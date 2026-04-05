@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/udaychauhan/**)",
+      "Bash(pyenv version:*)",
+      "Read(//opt/homebrew/bin/**)"
+    ]
+  }
+}
