@@ -12,9 +12,10 @@ build/
 dist/
 *.egg-info/
 
-# Local config and secrets
+# Local config and secrets — never commit real credentials
 .env
-.env.*
+.env.local
+.env.*.local
 config.local.*
 secrets/
 

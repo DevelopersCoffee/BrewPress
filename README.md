@@ -86,6 +86,7 @@ docs/
   gstack-delivery-plan.md
   auto-blog-system-plan.md
 .agents/skills/
+  context-hub/
   find-skills/
   wp-rest-api/
 ```
@@ -98,6 +99,12 @@ This repo uses a single shared skills source at `.agents/skills`, symlinked into
 - `.augment/skills`
 - `.codex/skills`
 - `.github/skills`
+
+Shared skills currently include:
+
+- `context-hub` for curated, up-to-date API and SDK docs via `chub`
+- `find-skills` for discovering installable agent skills
+- `wp-rest-api` for WordPress REST API implementation and debugging
 
 ## Getting Started
 
