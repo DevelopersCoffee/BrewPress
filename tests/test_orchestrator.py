@@ -8,13 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from brewpress.execution_layer import CommandResult, ExecutionTrace
-from brewpress.media_agent import MediaManifest, MediaType
+from brewpress.media_agent import MediaManifest
 from brewpress.models import BlogJob, JobState
 from brewpress.orchestrator import DraftResult, Orchestrator
 from brewpress.state_store import StateStore
-from brewpress.work_ingestion import WorkContext
 from brewpress.wp_client import AmbiguousMatchError, PublishError
-
 
 # ------------------------------------------------------------------ #
 # Helpers                                                              #

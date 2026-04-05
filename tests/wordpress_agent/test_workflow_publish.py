@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from brewpress.wordpress.workflows.publish_flow import publish_article, update_post_status
 
 

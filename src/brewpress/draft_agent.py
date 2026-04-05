@@ -14,9 +14,9 @@ Generation contract:
     - Content grounded in the provided diff/notes; no invented facts.
     - Short paragraphs. No fluff. Practical developer tone.
 
-Style grounding is embedded in the system prompt as a normalized summary
-of the DevelopersCoffee writing style.  A future stack will replace this
-with a live corpus fingerprint from the calibrate command.
+Style grounding is embedded in the system prompt as a normalized writing guide.
+When `brewpress calibrate` has run, the tone fingerprint from `~/.brewpress/tone.json`
+is appended to the system prompt automatically.
 
 ADK integration note: DraftAgent wraps cleanly as an ADK LlmAgent.
 The generate() method is the tool call boundary.
@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import re
 import textwrap
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
@@ -45,13 +46,7 @@ _DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 # Style grounding                                                      #
 # ------------------------------------------------------------------ #
 
-# Normalized DevelopersCoffee style guide embedded in the system prompt.
-# Replace this constant once the calibrate command builds tone.json.
-_STYLE_GUIDE = textwrap.dedent("""\
-    You are a technical blog writer for DevelopersCoffee.com — a backend-focused
-    developer blog covering Java, Spring, AI agents, system design, and developer
-    productivity.
-
+_WRITING_RULES = textwrap.dedent("""\
     Writing rules (non-negotiable):
     - Lead with value. First sentence tells the reader what they will learn or do.
     - Short paragraphs: 2–3 sentences max. One idea per paragraph.
@@ -64,6 +59,27 @@ _STYLE_GUIDE = textwrap.dedent("""\
     - Internal tone: confident, direct, slightly opinionated, technically exact.
     - Audience: mid-to-senior backend developers. No hand-holding, no basics recap.
 """)
+
+
+def _build_style_guide(
+    site_name: str,
+    site_focus: str,
+    tone_fingerprint: dict | None = None,
+) -> str:
+    """Build the system-prompt style guide from site identity and optional tone data."""
+    header = (
+        f"You are a technical blog writer for {site_name} — a {site_focus} blog.\n\n"
+    )
+    guide = header + _WRITING_RULES
+
+    if tone_fingerprint:
+        # Inject the site's actual voice fingerprint when calibrate has run.
+        tone_section = "\n## Site tone fingerprint (from calibrate)\n"
+        for key, value in tone_fingerprint.items():
+            tone_section += f"- {key}: {value}\n"
+        guide += tone_section
+
+    return guide
 
 # ------------------------------------------------------------------ #
 # Draft schema (structured output contract)                           #
@@ -155,7 +171,7 @@ def _truncate(text: str, limit: int) -> str:
     return text[:limit] + f"\n... [truncated at {limit} chars]"
 
 
-def build_prompt(ctx: WorkContext) -> str:
+def build_prompt(ctx: WorkContext, site_name: str = "my technical blog") -> str:
     """Construct the generation prompt from a WorkContext.
 
     Exposed as a module-level function so tests can assert on prompt
@@ -164,7 +180,7 @@ def build_prompt(ctx: WorkContext) -> str:
     parts: list[str] = []
 
     post_type = "CODE POST" if ctx.is_code_post else "IDEA POST"
-    parts.append(f"## Task\n\nGenerate a {post_type} for DevelopersCoffee.com.\n")
+    parts.append(f"## Task\n\nGenerate a {post_type} for {site_name}.\n")
 
     parts.append(f"**Topic:** {ctx.topic}")
 
@@ -331,6 +347,17 @@ class DraftAgent:
         self._client = genai.Client(api_key=config.google_api_key)
         self._model = model
         self._types = _types
+        self._site_name = config.site_name
+        self._site_focus = config.site_focus
+
+        # Load tone fingerprint from calibrate if available; silent miss is fine.
+        tone_path = Path.home() / ".brewpress" / "tone.json"
+        self._tone_fingerprint: dict | None = None
+        if tone_path.exists():
+            try:
+                self._tone_fingerprint = json.loads(tone_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass  # corrupt or unreadable tone.json — fall back to defaults
 
     def generate(self, ctx: WorkContext, force: bool = False) -> BlogJob:
         """Generate a draft BlogJob from a WorkContext.
@@ -347,13 +374,18 @@ class DraftAgent:
             ValueError: If the model response cannot be parsed or validated.
             google.genai.errors.APIError: On API-level failures.
         """
-        prompt = build_prompt(ctx)
+        prompt = build_prompt(ctx, site_name=self._site_name)
+        style_guide = _build_style_guide(
+            self._site_name,
+            self._site_focus,
+            self._tone_fingerprint,
+        )
 
         response = self._client.models.generate_content(
             model=self._model,
             contents=prompt,
             config=self._types.GenerateContentConfig(
-                system_instruction=_STYLE_GUIDE,
+                system_instruction=style_guide,
                 response_mime_type="application/json",
                 response_schema=DraftSchema,
                 temperature=0.4,   # low temperature for factual grounding

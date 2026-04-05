@@ -92,6 +92,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-calibrate even if tone.json already exists.",
     )
 
+    # doctor — environment and connectivity check
+    sub.add_parser("doctor", help="Check environment, credentials, and connectivity.")
+
     # review — display the current draft
     sub.add_parser("review", help="Display the current draft for review.")
 
@@ -358,8 +361,96 @@ def main() -> int:
             print()
         return 0
 
+    if args.command == "doctor":
+        return _run_doctor()
+
     print(f"[brewpress] '{args.command}' is not yet implemented.")
     return 0
+
+
+def _run_doctor() -> int:
+    """Check environment, credentials, and connectivity. Returns 0 if all checks pass."""
+    import os
+    import sys as _sys
+
+    ok = True
+
+    def check(label: str, passed: bool, detail: str = "") -> None:
+        nonlocal ok
+        icon = "OK" if passed else "FAIL"
+        msg = f"  [{icon}] {label}"
+        if detail:
+            msg += f" — {detail}"
+        print(msg)
+        if not passed:
+            ok = False
+
+    print("BrewPress doctor\n")
+
+    # Python version
+    major, minor = _sys.version_info[:2]
+    check(f"Python {major}.{minor}", major == 3 and minor >= 11,
+          "requires Python 3.11+" if not (major == 3 and minor >= 11) else "")
+
+    # Env vars
+    env_vars = {
+        "WP_URL": os.environ.get("WP_URL", "").strip(),
+        "WP_USERNAME": os.environ.get("WP_USERNAME", "").strip(),
+        "WP_APP_PASSWORD": os.environ.get("WP_APP_PASSWORD", "").strip(),
+        "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY", "").strip(),
+    }
+    for name, value in env_vars.items():
+        check(f"env {name}", bool(value), "not set" if not value else "")
+
+    # HTTPS enforcement
+    wp_url = env_vars["WP_URL"]
+    if wp_url:
+        check("WP_URL uses HTTPS", wp_url.startswith("https://"),
+              "must start with https://" if not wp_url.startswith("https://") else "")
+
+    # WordPress connectivity
+    if env_vars["WP_URL"] and env_vars["WP_USERNAME"] and env_vars["WP_APP_PASSWORD"]:
+        from brewpress.config import BrewPressConfig
+        from brewpress.wp_client import WordPressClient
+        try:
+            cfg = BrewPressConfig(
+                wp_url=wp_url.rstrip("/"),
+                wp_username=env_vars["WP_USERNAME"],
+                wp_app_password=env_vars["WP_APP_PASSWORD"],
+            )
+            client = WordPressClient(cfg)
+            posts = client._get("posts", per_page=1, _fields="id")
+            check("WordPress connectivity", True, f"reachable ({len(posts)} post sampled)")
+        except Exception as exc:
+            check("WordPress connectivity", False, str(exc)[:120])
+    else:
+        print("  [SKIP] WordPress connectivity — credentials incomplete")
+
+    # Gemini availability (basic import check)
+    if env_vars["GOOGLE_API_KEY"]:
+        try:
+            from google import genai as _genai  # noqa: F401
+            check("google-genai package", True)
+        except ImportError:
+            check("google-genai package", False, "run: pip install google-genai")
+    else:
+        print("  [SKIP] google-genai check — GOOGLE_API_KEY not set")
+
+    # Tone fingerprint
+    from pathlib import Path as _Path
+    tone_path = _Path.home() / ".brewpress" / "tone.json"
+    if tone_path.exists():
+        print(f"  [OK]   tone fingerprint — {tone_path}")
+    else:
+        print(f"  [INFO] tone fingerprint not found at {tone_path} (run brewpress calibrate)")
+
+    print()
+    if ok:
+        print("All checks passed.")
+        return 0
+    else:
+        print("Some checks failed. Fix the issues above and re-run brewpress doctor.")
+        return 1
 
 
 if __name__ == "__main__":
