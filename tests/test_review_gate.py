@@ -454,15 +454,35 @@ def test_cli_approve_content_wrong_state_exits_one(tmp_path: Path) -> None:
 
 
 def test_cli_approve_publish_exits_zero(tmp_path: Path) -> None:
+    from unittest.mock import MagicMock, patch
+
     step1 = _draft_job().mark_reviewed().approve_content()
-    rc, out, _ = _run_cli(["approve-publish"], tmp_path, initial=step1)
+    published = step1.model_copy(update={"wp_post_id": 42, "state": JobState.APPROVED_STEP_2})
+    mock_orc = MagicMock()
+    mock_orc.return_value.publish.return_value = published
+    with (
+        patch("brewpress.config.load_config", return_value=MagicMock()),
+        patch("brewpress.orchestrator.Orchestrator", mock_orc),
+    ):
+        rc, out, _ = _run_cli(["approve-publish"], tmp_path, initial=step1)
     assert rc == 0
-    assert "draft" in out.lower() or "approved" in out.lower()
+    assert "draft" in out.lower() or "42" in out
 
 
 def test_cli_approve_publish_live_exits_zero(tmp_path: Path) -> None:
-    step1 = _draft_job().mark_reviewed().approve_content()
-    rc, out, _ = _run_cli(["approve-publish", "--live"], tmp_path, initial=step1)
+    from unittest.mock import MagicMock, patch
+
+    step1 = _draft_job().mark_reviewed().approve_content().model_copy(
+        update={"publish_live": True}
+    )
+    published = step1.model_copy(update={"wp_post_id": 7, "state": JobState.APPROVED_STEP_2})
+    mock_orc = MagicMock()
+    mock_orc.return_value.publish.return_value = published
+    with (
+        patch("brewpress.config.load_config", return_value=MagicMock()),
+        patch("brewpress.orchestrator.Orchestrator", mock_orc),
+    ):
+        rc, out, _ = _run_cli(["approve-publish", "--live"], tmp_path, initial=step1)
     assert rc == 0
     assert "live" in out.lower()
 

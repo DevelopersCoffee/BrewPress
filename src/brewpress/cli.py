@@ -1,7 +1,6 @@
 """BrewPress CLI entrypoint.
 
 Subcommands are registered here. Business logic lives in agent modules.
-All subcommands below are stubs — implementation arrives in later stacks.
 """
 
 from __future__ import annotations
@@ -148,6 +147,31 @@ def main() -> int:
 
     if args.command == "draft":
         _validate_draft_args(args, parser)
+        from brewpress.config import load_config
+        from brewpress.orchestrator import Orchestrator
+        try:
+            config = load_config(required=("GOOGLE_API_KEY",))
+        except OSError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        try:
+            result = Orchestrator().draft(
+                topic=args.topic,
+                notes=args.notes,
+                diff_path=args.diff_path,
+                pr_url=args.pr_url,
+                force=args.force,
+                config=config,
+            )
+        except (ValueError, FileNotFoundError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        from brewpress.review_gate import format_draft
+        print(format_draft(result.job))
+        if result.media_gaps:
+            for gap in result.media_gaps:
+                print(f"[brewpress] warning: {gap}", file=sys.stderr)
+        return 0
 
     # ---------------------------------------------------------------- #
     # Review-loop commands — wired to ReviewGate                        #
@@ -190,18 +214,41 @@ def main() -> int:
             return 1
 
     if args.command == "approve-publish":
+        from brewpress.config import load_config
+        from brewpress.orchestrator import Orchestrator
         from brewpress.review_gate import ReviewGate
+        from brewpress.wp_client import AmbiguousMatchError, PublishError
+        # Load WP credentials before transitioning state so a missing
+        # env var cannot leave the job stuck in APPROVED_STEP_2 with no
+        # publish having happened.
         try:
-            job = ReviewGate().approve_publish(live=args.live)
-            dest = "live publish" if job.publish_live else "WordPress draft"
-            print(
-                f"[brewpress] Approved for {dest} (step 2 of 2). "
-                "WordPress client will be wired in Stack 6."
-            )
-            return 0
+            config = load_config(required=("WP_URL", "WP_USERNAME", "WP_APP_PASSWORD"))
+        except OSError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        # Transition state to APPROVED_STEP_2 only after credentials are confirmed.
+        try:
+            ReviewGate().approve_publish(live=args.live)
         except (FileNotFoundError, ValueError) as exc:
             print(f"[brewpress] {exc}", file=sys.stderr)
             return 1
+        try:
+            updated_job = Orchestrator().publish(config=config)
+        except AmbiguousMatchError as exc:
+            print(f"[brewpress] Ambiguous WP post match: {exc}", file=sys.stderr)
+            return 1
+        except PublishError as exc:
+            from pathlib import Path
+            bundle_dir = Path.home() / ".brewpress" / "bundles"
+            print(f"[brewpress] WordPress publish failed: {exc}", file=sys.stderr)
+            print(f"[brewpress] Failure bundle written to {bundle_dir}/", file=sys.stderr)
+            return 1
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        dest = "live" if updated_job.publish_live else "draft"
+        print(f"[brewpress] Published to WordPress as {dest}. Post ID: {updated_job.wp_post_id}")
+        return 0
 
     if args.command == "reject":
         from brewpress.review_gate import ReviewGate
