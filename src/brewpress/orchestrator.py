@@ -32,10 +32,9 @@ from brewpress.media_agent import generate_for_code_post, validate_code_post_med
 from brewpress.models import BlogJob
 from brewpress.review_gate import ReviewGate
 from brewpress.state_store import StateStore
-from brewpress.work_ingestion import WorkContext, ingest
 from brewpress.wordpress.agent import WordPressAgent
+from brewpress.work_ingestion import ingest
 from brewpress.wp_client import (
-    AmbiguousMatchError,
     PublishError,
     WordPressClient,
     generate_failure_bundle,

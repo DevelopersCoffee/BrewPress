@@ -280,8 +280,8 @@ def main() -> int:
     # ---------------------------------------------------------------- #
 
     if args.command == "calibrate":
-        from pathlib import Path as _Path
         import json as _json
+        from pathlib import Path as _Path
 
         tone_path = _Path.home() / ".brewpress" / "tone.json"
         if tone_path.exists() and not args.force:
@@ -301,7 +301,9 @@ def main() -> int:
 
         try:
             client = WordPressClient(config)
-            posts: list = client._get("posts", per_page=20, status="publish", _fields="id,title,excerpt,slug,date")
+            posts: list = client._get(
+                "posts", per_page=20, status="publish", _fields="id,title,excerpt,slug,date"
+            )
         except Exception as exc:
             print(f"[brewpress] Failed to fetch posts: {exc}", file=sys.stderr)
             return 1
@@ -322,7 +324,9 @@ def main() -> int:
         }
 
         tone_path.parent.mkdir(parents=True, exist_ok=True)
-        tone_path.write_text(_json.dumps(fingerprint, indent=2, ensure_ascii=False), encoding="utf-8")
+        tone_path.write_text(
+            _json.dumps(fingerprint, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         print(f"[brewpress] Tone fingerprint written to {tone_path} ({len(posts)} posts).")
         return 0
 
