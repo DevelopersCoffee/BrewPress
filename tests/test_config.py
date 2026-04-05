@@ -25,6 +25,12 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(k, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _no_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent _load_dotenv from reading the real .env during tests."""
+    monkeypatch.setattr("brewpress.config._load_dotenv", lambda: None)
+
+
 # ------------------------------------------------------------------ #
 # Existing tests (all 4 vars required — default behaviour)            #
 # ------------------------------------------------------------------ #

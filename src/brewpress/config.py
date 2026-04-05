@@ -3,6 +3,12 @@
 No secrets are read from files tracked by git.
 Call load_config() with a `required` tuple specifying which vars the calling
 subcommand needs. Only the listed vars are validated; others default to None.
+
+Local development: place a .env file in the project root (git-ignored).
+python-dotenv is used to load it automatically — values with spaces (e.g.
+WordPress Application Passwords) must be quoted in .env:
+
+    WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
 """
 
 from __future__ import annotations
@@ -10,6 +16,7 @@ from __future__ import annotations
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 
 _ALL_VARS: tuple[str, ...] = (
     "WP_URL",
@@ -17,6 +24,18 @@ _ALL_VARS: tuple[str, ...] = (
     "WP_APP_PASSWORD",
     "GOOGLE_API_KEY",
 )
+
+
+def _load_dotenv() -> None:
+    """Load .env from the project root if present, without overriding existing vars."""
+    try:
+        from dotenv import load_dotenv
+
+        env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+        if env_path.exists():
+            load_dotenv(env_path, override=False)
+    except ImportError:
+        pass  # python-dotenv optional; CI/CD injects vars directly
 
 
 @dataclass(frozen=True)
@@ -32,6 +51,10 @@ def load_config(
 ) -> BrewPressConfig:
     """Load environment variables, validating only the ones in `required`.
 
+    Automatically loads a .env file from the project root when present so
+    that Application Passwords with spaces are handled correctly without
+    requiring the caller to manually source the file.
+
     Args:
         required: Tuple of env var names this subcommand needs. Defaults to
                   all four vars (WP_URL, WP_USERNAME, WP_APP_PASSWORD,
@@ -44,6 +67,8 @@ def load_config(
     Raises:
         EnvironmentError: If any var listed in `required` is missing or empty.
     """
+    _load_dotenv()
+
     missing = [k for k in required if not os.environ.get(k, "").strip()]
     if missing:
         raise OSError(
