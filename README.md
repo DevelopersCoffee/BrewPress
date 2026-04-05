@@ -108,7 +108,71 @@ Shared skills currently include:
 
 ## Getting Started
 
-Implementation should follow:
+### 1. Clone and install
+
+```bash
+git clone git@github.com:DevelopersCoffee/BrewPress.git
+cd BrewPress
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
+### 2. Configure credentials
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in real values:
+
+| Variable | Description |
+|---|---|
+| `WP_URL` | Your WordPress site URL (`https://` required) |
+| `WP_USERNAME` | WordPress username for the Application Password |
+| `WP_APP_PASSWORD` | Generated via **WP Admin → Users → Profile → Application Passwords** |
+| `GOOGLE_API_KEY` | Google AI API key for draft generation |
+
+> **Never commit `.env`.** It is git-ignored by default.
+
+### 3. Sanity check
+
+Verify the WordPress connection and list your 5 most recent posts:
+
+```bash
+source .venv/bin/activate
+export $(grep -v '^#' .env | xargs)
+brewpress --version
+```
+
+A successful connection will authenticate via WordPress Application Password over HTTPS.
+
+### 4. Generate your first draft
+
+```bash
+brewpress draft --topic "your topic here"
+```
+
+### 5. Review and publish
+
+```bash
+brewpress review
+brewpress approve-content
+brewpress approve-publish          # saves as WordPress draft
+brewpress approve-publish --live   # publishes live
+```
+
+### GitHub Actions / CI
+
+Secrets are stored in the repository under **Settings → Secrets → Actions**:
+
+- `WP_URL`
+- `WP_USERNAME`
+- `WP_APP_PASSWORD`
+
+Reference them in workflows as `${{ secrets.WP_URL }}` etc.
+
+### Implementation docs
 
 1. `docs/final-prd.md`
 2. `docs/gstack-delivery-plan.md`
