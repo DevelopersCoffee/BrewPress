@@ -339,6 +339,67 @@ def test_find_post_returns_none_when_no_title() -> None:
     assert client.find_post(_job(title="", slug="my-slug")) is None
 
 
+def test_find_post_slug_falls_back_when_status_any_forbidden() -> None:
+    """Regression: WP returns 400 'Status is forbidden' for status=any when
+    the user role lacks the capability.  find_post must retry without the
+    status filter and still resolve the post by slug."""
+    session = MagicMock()
+
+    def _get(url: str, params: dict | None = None, **_kw: object) -> MagicMock:
+        resp_forbidden = MagicMock()
+        resp_forbidden.status_code = 400
+        resp_forbidden.raise_for_status.side_effect = requests.HTTPError(
+            response=resp_forbidden
+        )
+
+        resp_ok = MagicMock()
+        resp_ok.status_code = 200
+        resp_ok.json.return_value = [_wp_post(42)]
+        resp_ok.raise_for_status.return_value = None
+
+        p = params or {}
+        # First call includes status=any → forbidden
+        if p.get("status") == "any":
+            return resp_forbidden
+        # Retry without status → success
+        if "slug" in p:
+            return resp_ok
+        return MagicMock(status_code=200, json=lambda: {}, raise_for_status=lambda: None)
+
+    session.get.side_effect = _get
+    client = _client_with_session(session)
+    assert client.find_post(_job()) == 42
+
+
+def test_find_post_slug_not_found_after_forbidden_status_returns_none() -> None:
+    """If status=any is forbidden AND no public post matches the slug,
+    find_post must return None (not raise)."""
+    session = MagicMock()
+
+    def _get(url: str, params: dict | None = None, **_kw: object) -> MagicMock:
+        resp_forbidden = MagicMock()
+        resp_forbidden.status_code = 400
+        resp_forbidden.raise_for_status.side_effect = requests.HTTPError(
+            response=resp_forbidden
+        )
+
+        resp_empty = MagicMock()
+        resp_empty.status_code = 200
+        resp_empty.json.return_value = []
+        resp_empty.raise_for_status.return_value = None
+
+        p = params or {}
+        if p.get("status") == "any":
+            return resp_forbidden
+        if "slug" in p:
+            return resp_empty
+        return MagicMock(status_code=200, json=lambda: {}, raise_for_status=lambda: None)
+
+    session.get.side_effect = _get
+    client = _client_with_session(session)
+    assert client.find_post(_job()) is None
+
+
 # ------------------------------------------------------------------ #
 # publish — create new post                                            #
 # ------------------------------------------------------------------ #

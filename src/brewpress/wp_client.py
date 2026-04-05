@@ -237,8 +237,12 @@ class WordPressClient:
         Raises:
             AmbiguousMatchError: Title search returned more than one exact match.
         """
-        # 1. Slug
-        by_slug: list[dict[str, Any]] = self._get("posts", slug=job.slug, status="any")
+        # 1. Slug — try with status=any first; fall back to published-only when
+        #    the WP role lacks the 'read_private_posts' capability (HTTP 400).
+        try:
+            by_slug: list[dict[str, Any]] = self._get("posts", slug=job.slug, status="any")
+        except requests.HTTPError:
+            by_slug = self._get("posts", slug=job.slug)
         if by_slug:
             return int(by_slug[0]["id"])
 
@@ -250,11 +254,14 @@ class WordPressClient:
             except requests.HTTPError:
                 pass  # ID not found — fall through to title search
 
-        # 3. Title search
+        # 3. Title search — same fallback for status=any permission error.
         if job.title:
-            candidates: list[dict[str, Any]] = self._get(
-                "posts", search=job.title, status="any", per_page=20
-            )
+            try:
+                candidates: list[dict[str, Any]] = self._get(
+                    "posts", search=job.title, status="any", per_page=20
+                )
+            except requests.HTTPError:
+                candidates = self._get("posts", search=job.title, per_page=20)
             exact = [
                 p for p in candidates
                 if p.get("title", {}).get("rendered", "").strip() == job.title.strip()
