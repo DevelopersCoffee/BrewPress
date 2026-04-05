@@ -148,6 +148,17 @@ def test_approve_publish_sets_timestamp() -> None:
     assert "T" in job.publish_approved_at
 
 
+def test_approve_publish_default_is_not_live() -> None:
+    job = BlogJob().mark_reviewed().approve_content().approve_publish()
+    assert job.publish_live is False
+
+
+def test_approve_publish_live_sets_flag() -> None:
+    job = BlogJob().mark_reviewed().approve_content().approve_publish(live=True)
+    assert job.publish_live is True
+    assert job.state == JobState.APPROVED_STEP_2
+
+
 def test_approve_publish_invalid_from_draft() -> None:
     with pytest.raises(ValueError, match="APPROVED_STEP_1"):
         BlogJob().approve_publish()
@@ -239,3 +250,83 @@ def test_full_update_post_chain() -> None:
     )
     assert job.state == JobState.APPROVED_STEP_2
     assert job.target_wp_post_id == 7
+
+
+# ------------------------------------------------------------------ #
+# revise                                                               #
+# ------------------------------------------------------------------ #
+
+
+def test_revise_from_draft_stays_draft() -> None:
+    """PRD: revise before any approval — no reset needed."""
+    job = BlogJob().revise("make the intro shorter")
+    assert job.state == JobState.DRAFT
+    assert job.revise_instruction == "make the intro shorter"
+
+
+def test_revise_from_reviewed_resets_to_draft() -> None:
+    """PRD: revise before any approval — no approval to clear, re-generation needed."""
+    job = BlogJob().mark_reviewed().revise("add more code examples")
+    assert job.state == JobState.DRAFT
+    assert job.revise_instruction == "add more code examples"
+
+
+def test_revise_from_draft_does_not_touch_timestamps() -> None:
+    job = BlogJob().revise("fix tone")
+    assert job.content_approved_at is None
+    assert job.publish_approved_at is None
+
+
+def test_revise_after_approve_content_resets_content_approval() -> None:
+    """PRD: revise after approve_content → reset content approval."""
+    job = BlogJob().mark_reviewed().approve_content().revise("shorten conclusion")
+    assert job.state == JobState.DRAFT
+    assert job.content_approved_at is None
+    assert job.revise_instruction == "shorten conclusion"
+
+
+def test_revise_after_approve_content_does_not_clear_publish() -> None:
+    # publish_approved_at was never set — confirm it stays None
+    job = BlogJob().mark_reviewed().approve_content().revise("tweak intro")
+    assert job.publish_approved_at is None
+
+
+def test_revise_after_approve_publish_resets_both_approvals() -> None:
+    """PRD: revise after approve_publish → reset both approvals."""
+    job = (
+        BlogJob()
+        .mark_reviewed()
+        .approve_content()
+        .approve_publish()
+        .revise("restructure the whole thing")
+    )
+    assert job.state == JobState.DRAFT
+    assert job.content_approved_at is None
+    assert job.publish_approved_at is None
+    assert job.revise_instruction == "restructure the whole thing"
+
+
+def test_revise_after_approve_publish_live_clears_publish_live() -> None:
+    """publish_live must be cleared when reverting from APPROVED_STEP_2."""
+    job = (
+        BlogJob()
+        .mark_reviewed()
+        .approve_content()
+        .approve_publish(live=True)
+        .revise("not ready yet")
+    )
+    assert job.publish_live is False
+
+
+def test_revise_returns_new_instance() -> None:
+    original = BlogJob()
+    revised = original.revise("change tone")
+    assert original is not revised
+    assert original.revise_instruction == ""
+
+
+def test_revise_rejected_raises() -> None:
+    """Cannot revise a terminal REJECTED job."""
+    job = BlogJob().reject(reason="off brand")
+    with pytest.raises(ValueError, match="rejected"):
+        job.revise("never mind, bring it back")

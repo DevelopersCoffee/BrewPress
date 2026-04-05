@@ -73,6 +73,12 @@ class BlogJob(BaseModel):
     wp_post_id: int | None = None
     target_wp_post_id: int | None = None  # required when intent=UPDATE_POST
 
+    # Publish intent — set by approve_publish(live=True)
+    publish_live: bool = False
+
+    # Revision — instruction stored for re-generation pass
+    revise_instruction: str = ""
+
     # Rejection
     rejected_reason: str = ""
 
@@ -102,8 +108,14 @@ class BlogJob(BaseModel):
             }
         )
 
-    def approve_publish(self) -> BlogJob:
-        """Transition APPROVED_STEP_1 → APPROVED_STEP_2 (publish approval, step 2 of 2)."""
+    def approve_publish(self, live: bool = False) -> BlogJob:
+        """Transition APPROVED_STEP_1 → APPROVED_STEP_2 (publish approval, step 2 of 2).
+
+        Args:
+            live: When True, instructs the WordPress agent to publish live instead
+                  of saving as a draft. Maps to ``approve_publish publish=true``
+                  in the PRD review command surface. Never inferred implicitly.
+        """
         if self.state != JobState.APPROVED_STEP_1:
             raise ValueError(
                 f"approve_publish() requires state APPROVED_STEP_1, "
@@ -118,8 +130,40 @@ class BlogJob(BaseModel):
             update={
                 "state": JobState.APPROVED_STEP_2,
                 "publish_approved_at": datetime.now(UTC).isoformat(),
+                "publish_live": live,
             }
         )
+
+    def revise(self, instruction: str) -> BlogJob:
+        """Store a revision instruction and reset approvals per PRD §Approval Reset Rules.
+
+        Reset behaviour:
+            DRAFT            → DRAFT  (no approval to reset; stores instruction)
+            REVIEWED         → DRAFT  (not yet approved; re-generation needed)
+            APPROVED_STEP_1  → DRAFT  (resets content approval and timestamp)
+            APPROVED_STEP_2  → DRAFT  (resets both approvals, timestamps, and publish_live)
+            REJECTED         → raises ValueError (terminal state)
+        """
+        if self.state == JobState.REJECTED:
+            raise ValueError(
+                "Cannot revise a rejected job. Run 'brewpress draft' to start a new job."
+            )
+
+        update: dict[str, Any] = {
+            "state": JobState.DRAFT,
+            "revise_instruction": instruction,
+        }
+
+        # reset content approval when it was already set
+        if self.state in (JobState.APPROVED_STEP_1, JobState.APPROVED_STEP_2):
+            update["content_approved_at"] = None
+
+        # reset publish approval when it was already set
+        if self.state == JobState.APPROVED_STEP_2:
+            update["publish_approved_at"] = None
+            update["publish_live"] = False
+
+        return self.model_copy(update=update)
 
     def reject(self, reason: str = "") -> BlogJob:
         """Transition any non-terminal state → REJECTED."""

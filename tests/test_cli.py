@@ -101,6 +101,25 @@ def test_approve_publish_default_not_live() -> None:
 
 
 # ------------------------------------------------------------------ #
+# revise <instruction>                                                 #
+# ------------------------------------------------------------------ #
+
+
+def test_revise_parses_instruction() -> None:
+    parser = build_parser()
+    args = parser.parse_args(["revise", "shorten the introduction"])
+    assert args.instruction == "shorten the introduction"
+
+
+def test_revise_instruction_is_positional() -> None:
+    """instruction is a positional arg — no flag prefix needed."""
+    parser = build_parser()
+    args = parser.parse_args(["revise", "fix the tone please"])
+    assert args.command == "revise"
+    assert "fix" in args.instruction
+
+
+# ------------------------------------------------------------------ #
 # reject --reason flag                                                 #
 # ------------------------------------------------------------------ #
 

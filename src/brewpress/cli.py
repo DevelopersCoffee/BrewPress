@@ -110,6 +110,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Publish live instead of saving as draft. Never inferred implicitly.",
     )
 
+    # revise — apply a revision instruction (resets approvals per PRD rules)
+    revise = sub.add_parser(
+        "revise",
+        help="Apply a revision instruction and reset approvals as needed.",
+    )
+    revise.add_argument(
+        "instruction",
+        help="Revision instruction (e.g. 'shorten the introduction').",
+    )
+
     # reject — terminate the current job
     reject = sub.add_parser("reject", help="Reject and discard the current draft.")
     reject.add_argument("--reason", default="", help="Optional rejection reason.")
