@@ -46,3 +46,8 @@ These rules apply to any coding agent working in this repository.
 - Prefer secure-by-default examples.
 - Prefer placeholder values like `YOUR_WP_APP_PASSWORD`.
 - Keep all setup docs safe to copy into a public repository.
+
+## Documentation Grounding
+
+- For external APIs and SDKs, prefer the shared `context-hub` skill and `chub` CLI when available.
+- Use curated, current docs before relying on model memory for fast-moving integrations.
