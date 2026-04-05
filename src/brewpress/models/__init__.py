@@ -57,8 +57,11 @@ class BlogJob(BaseModel):
     title: str = ""
     slug: str = ""
     meta_description: str = ""
+    excerpt: str = ""
     primary_keyword: str = ""
     secondary_keywords: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
     outline: list[str] = Field(default_factory=list)
     draft_body_md: str = ""
     is_single_topic: bool = True

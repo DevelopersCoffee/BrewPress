@@ -32,6 +32,8 @@ classifiers = [
 dependencies = [
   "pydantic>=2.0",
   "google-genai>=1.0",
+  "requests>=2.28",
+  "markdown>=3.0",
 ]
 
 [project.optional-dependencies]
