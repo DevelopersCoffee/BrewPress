@@ -259,6 +259,30 @@ def test_approve_content_raises_when_no_draft(tmp_path: Path) -> None:
         ReviewGate(store=_store(tmp_path)).approve_content()
 
 
+def test_approve_content_raises_below_min_quality_score(tmp_path: Path) -> None:
+    """Quality gate: score below threshold must block content approval."""
+    reviewed = _draft_job(quality_score=59).mark_reviewed()
+    gate = _gate(tmp_path, reviewed)
+    with pytest.raises(ValueError, match="60"):
+        gate.approve_content()
+
+
+def test_approve_content_passes_at_min_quality_score(tmp_path: Path) -> None:
+    """Quality gate boundary: exactly at threshold must succeed."""
+    reviewed = _draft_job(quality_score=60).mark_reviewed()
+    gate = _gate(tmp_path, reviewed)
+    job = gate.approve_content()
+    assert job.state == JobState.APPROVED_STEP_1
+
+
+def test_approve_content_passes_when_quality_score_is_none(tmp_path: Path) -> None:
+    """No score set → quality gate is skipped (not all drafts have scored quality)."""
+    reviewed = _draft_job(quality_score=None).mark_reviewed()
+    gate = _gate(tmp_path, reviewed)
+    job = gate.approve_content()
+    assert job.state == JobState.APPROVED_STEP_1
+
+
 # ------------------------------------------------------------------ #
 # ReviewGate.approve_publish                                           #
 # ------------------------------------------------------------------ #
@@ -366,11 +390,19 @@ def test_reject_terminal_raises(tmp_path: Path) -> None:
         gate.reject()
 
 
-def test_reject_approved_step_2_raises(tmp_path: Path) -> None:
+def test_reject_approved_step_2_raises_without_force(tmp_path: Path) -> None:
     fully_approved = _draft_job().mark_reviewed().approve_content().approve_publish()
     gate = _gate(tmp_path, fully_approved)
-    with pytest.raises(ValueError, match="terminal"):
+    with pytest.raises(ValueError, match="--force"):
         gate.reject()
+
+
+def test_reject_approved_step_2_with_force(tmp_path: Path) -> None:
+    fully_approved = _draft_job().mark_reviewed().approve_content().approve_publish()
+    gate = _gate(tmp_path, fully_approved)
+    job = gate.reject(force=True, reason="wrong direction")
+    assert job.state == JobState.REJECTED
+    assert job.rejected_reason == "wrong direction"
 
 
 def test_rollback_publish_approval_resets_to_approved_step_1(tmp_path: Path) -> None:
@@ -559,3 +591,11 @@ def test_cli_reject_with_reason_exits_zero(tmp_path: Path) -> None:
 def test_cli_reject_no_draft_exits_one(tmp_path: Path) -> None:
     rc, _, err = _run_cli(["reject"], tmp_path)
     assert rc == 1
+
+
+def test_cli_reject_force_exits_zero(tmp_path: Path) -> None:
+    """--force flag must allow rejection from APPROVED_STEP_2."""
+    fully_approved = _draft_job().mark_reviewed().approve_content().approve_publish()
+    rc, out, _ = _run_cli(["reject", "--force"], tmp_path, initial=fully_approved)
+    assert rc == 0
+    assert "rejected" in out.lower()

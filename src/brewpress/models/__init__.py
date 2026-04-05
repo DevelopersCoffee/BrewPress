@@ -79,6 +79,9 @@ class BlogJob(BaseModel):
     # Publish intent — set by approve_publish(live=True)
     publish_live: bool = False
 
+    # Content type — True when diff/PR URL/commands are present (PRD §Content Types)
+    is_code_post: bool = False
+
     # Revision — instruction stored for re-generation pass
     revise_instruction: str = ""
 
@@ -168,11 +171,23 @@ class BlogJob(BaseModel):
 
         return self.model_copy(update=update)
 
-    def reject(self, reason: str = "") -> BlogJob:
-        """Transition any non-terminal state → REJECTED."""
-        if self.state in (JobState.APPROVED_STEP_2, JobState.REJECTED):
+    def reject(self, reason: str = "", force: bool = False) -> BlogJob:
+        """Transition any non-terminal state → REJECTED.
+
+        Args:
+            reason: Optional human-readable rejection reason.
+            force:  When True, allow rejection even from APPROVED_STEP_2
+                    (e.g. after a failed publish where rollback isn't viable).
+        """
+        if self.state == JobState.REJECTED:
             raise ValueError(
-                f"Cannot reject a job in terminal state {self.state.value!r}."
+                "Job is already in a terminal REJECTED state and cannot be rejected again."
+            )
+        if self.state == JobState.APPROVED_STEP_2 and not force:
+            raise ValueError(
+                "Cannot reject a job in APPROVED_STEP_2 state. "
+                "Use 'brewpress reject --force' to override, or "
+                "'brewpress approve-publish' to retry publishing."
             )
         return self.model_copy(
             update={"state": JobState.REJECTED, "rejected_reason": reason}

@@ -132,34 +132,27 @@ def test_load_config_empty_required_no_vars_needed(monkeypatch: pytest.MonkeyPat
 
 
 # ------------------------------------------------------------------ #
-# HTTPS warning                                                        #
+# HTTPS enforcement                                                    #
 # ------------------------------------------------------------------ #
 
 
-def test_https_warning_on_http_url(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_https_raises_on_http_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """HTTP URLs must be rejected — credentials transmitted in plaintext."""
     _set_env(monkeypatch, {"WP_URL": "http://example.com"})
-    load_config()
-    captured = capsys.readouterr()
-    assert "Warning" in captured.err
-    assert "HTTPS" in captured.err
+    with pytest.raises(OSError, match="HTTPS"):
+        load_config()
 
 
-def test_no_https_warning_on_https_url(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_no_error_on_https_url(monkeypatch: pytest.MonkeyPatch) -> None:
     _set_env(monkeypatch)
-    load_config()
-    captured = capsys.readouterr()
-    assert captured.err == ""
+    cfg = load_config()
+    assert cfg.wp_url == "https://example.com"
 
 
-def test_no_https_warning_when_wp_url_not_required(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+def test_no_https_error_when_wp_url_not_required(
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
-    load_config(required=("GOOGLE_API_KEY",))
-    captured = capsys.readouterr()
-    assert captured.err == ""
+    cfg = load_config(required=("GOOGLE_API_KEY",))
+    assert cfg.wp_url is None

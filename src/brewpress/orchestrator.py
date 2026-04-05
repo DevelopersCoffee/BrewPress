@@ -32,10 +32,9 @@ from brewpress.media_agent import generate_for_code_post, validate_code_post_med
 from brewpress.models import BlogJob
 from brewpress.review_gate import ReviewGate
 from brewpress.state_store import StateStore
-from brewpress.work_ingestion import WorkContext, ingest
 from brewpress.wordpress.agent import WordPressAgent
+from brewpress.work_ingestion import ingest
 from brewpress.wp_client import (
-    AmbiguousMatchError,
     PublishError,
     WordPressClient,
     generate_failure_bundle,
@@ -101,6 +100,7 @@ class Orchestrator:
         diff_path: str | None = None,
         pr_url: str | None = None,
         force: bool = False,
+        auto_approve: bool = False,
         config: BrewPressConfig | None = None,
     ) -> DraftResult:
         """Run the full draft generation pipeline.
@@ -163,12 +163,20 @@ class Orchestrator:
                 "terminal and output proof screenshot capture."
             ]
 
+        # Tag the job with content-type for downstream use (publish, linking).
+        job = job.model_copy(update={"is_code_post": ctx.is_code_post})
+
         # Save in DRAFT state, then immediately transition to REVIEWED.
         # The user sees the draft on the same invocation and can run
         # approve-content without a separate `brewpress review` call.
         self._store.save(job)
         gate = ReviewGate(store=self._store)
         reviewed_job = gate.review()
+
+        # --auto-approve: immediately approve content after review so the user
+        # can go straight to approve-publish without a separate command.
+        if auto_approve:
+            reviewed_job = gate.approve_content()
 
         return DraftResult(job=reviewed_job, media_gaps=media_gaps)
 
@@ -225,8 +233,20 @@ class Orchestrator:
 
         _bundle_dir = bundle_dir or (Path.home() / ".brewpress" / "bundles")
 
+        # Upload featured image for code posts when screenshots are available.
+        # Uses the terminal screenshot (most legible) as the post hero image.
+        featured_media_id: int | None = None
+        if job.is_code_post:
+            media_dir = self._media_base / job.job_id
+            screenshots = sorted(media_dir.glob("terminal_*.png")) if media_dir.is_dir() else []
+            if screenshots:
+                try:
+                    featured_media_id = client.upload_image_file(screenshots[0])
+                except PublishError:
+                    pass  # media upload failure is non-fatal; post continues without hero
+
         try:
-            updated_job = client.publish(job)
+            updated_job = client.publish(job, featured_media_id=featured_media_id)
         except PublishError:
             _bundle_dir.mkdir(parents=True, exist_ok=True)
             bundle_path = _bundle_dir / f"failure_bundle_{job.job_id[:8]}.json"

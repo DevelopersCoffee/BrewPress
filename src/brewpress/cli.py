@@ -122,6 +122,11 @@ def build_parser() -> argparse.ArgumentParser:
     # reject — terminate the current job
     reject = sub.add_parser("reject", help="Reject and discard the current draft.")
     reject.add_argument("--reason", default="", help="Optional rejection reason.")
+    reject.add_argument(
+        "--force",
+        action="store_true",
+        help="Allow rejection even when job is in APPROVED_STEP_2 state.",
+    )
 
     return parser
 
@@ -161,6 +166,7 @@ def main() -> int:
                 diff_path=args.diff_path,
                 pr_url=args.pr_url,
                 force=args.force,
+                auto_approve=args.auto_approve,
                 config=config,
             )
         except (ValueError, FileNotFoundError) as exc:
@@ -262,7 +268,7 @@ def main() -> int:
     if args.command == "reject":
         from brewpress.review_gate import ReviewGate
         try:
-            ReviewGate().reject(reason=args.reason)
+            ReviewGate().reject(reason=args.reason, force=args.force)
             print("[brewpress] Draft rejected and discarded.")
             return 0
         except (FileNotFoundError, ValueError) as exc:
@@ -270,8 +276,88 @@ def main() -> int:
             return 1
 
     # ---------------------------------------------------------------- #
-    # Remaining stubs — implementation arrives in later stacks          #
+    # calibrate — fetch recent posts and build tone fingerprint         #
     # ---------------------------------------------------------------- #
+
+    if args.command == "calibrate":
+        import json as _json
+        from pathlib import Path as _Path
+
+        tone_path = _Path.home() / ".brewpress" / "tone.json"
+        if tone_path.exists() and not args.force:
+            print(
+                f"[brewpress] Tone fingerprint already exists at {tone_path}. "
+                "Use --force to recalibrate."
+            )
+            return 0
+
+        from brewpress.config import load_config
+        from brewpress.wp_client import WordPressClient
+        try:
+            config = load_config(required=("WP_URL", "WP_USERNAME", "WP_APP_PASSWORD"))
+        except OSError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+
+        try:
+            client = WordPressClient(config)
+            posts: list = client._get(
+                "posts", per_page=20, status="publish", _fields="id,title,excerpt,slug,date"
+            )
+        except Exception as exc:
+            print(f"[brewpress] Failed to fetch posts: {exc}", file=sys.stderr)
+            return 1
+
+        fingerprint = {
+            "site_url": config.wp_url,
+            "post_count": len(posts),
+            "posts": [
+                {
+                    "id": p.get("id"),
+                    "title": p.get("title", {}).get("rendered", ""),
+                    "slug": p.get("slug", ""),
+                    "date": p.get("date", ""),
+                    "excerpt": p.get("excerpt", {}).get("rendered", ""),
+                }
+                for p in posts
+            ],
+        }
+
+        tone_path.parent.mkdir(parents=True, exist_ok=True)
+        tone_path.write_text(
+            _json.dumps(fingerprint, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"[brewpress] Tone fingerprint written to {tone_path} ({len(posts)} posts).")
+        return 0
+
+    # ---------------------------------------------------------------- #
+    # suggest — surface topic ideas from trend signals                  #
+    # ---------------------------------------------------------------- #
+
+    if args.command == "suggest":
+        from brewpress.trend_scout import NullTrendSource, TrendScout
+
+        keywords: list[str] = args.topic or []
+        scout = TrendScout(source=NullTrendSource(), region=args.region)
+        suggestions = scout.suggest(keywords=keywords, limit=args.count)
+
+        if not suggestions:
+            print(
+                "[brewpress] No suggestions generated. "
+                "Connect a real TrendDataSource (e.g. Google Trends) to enable scoring."
+            )
+            if keywords:
+                print("[brewpress] Evaluated keywords: " + ", ".join(keywords))
+            return 0
+
+        for i, s in enumerate(suggestions, start=1):
+            print(f"{i}. {s.topic} [{s.strategy}] score={s.score:.2f}")
+            print(f"   Angle:    {s.angle}")
+            print(f"   Keywords: {', '.join(s.keywords)}")
+            print(f"   Why:      {s.reasoning}")
+            print()
+        return 0
+
     print(f"[brewpress] '{args.command}' is not yet implemented.")
     return 0
 
