@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the interactive [y/N] content approval prompt.",
     )
+    draft.add_argument(
+        "--auto-critic",
+        action="store_true",
+        help="Run the Critic Agent after generation and show the review inline.",
+    )
 
     # suggest — surface topic and keyword ideas from trend signals
     suggest = sub.add_parser(
@@ -166,6 +171,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Re-calibrate even if tone.json already exists.",
     )
 
+    # critic — LLM-based post review (Generator + Critic loop)
+    critic_p = sub.add_parser(
+        "critic",
+        help="Run the Critic Agent to review the current draft and get a pass/revise verdict.",
+    )
+    critic_p.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the revision instruction automatically when verdict is 'revise'.",
+    )
+    critic_p.add_argument(
+        "--eval",
+        action="store_true",
+        dest="run_eval",
+        help="Also run deterministic quality checks (no API).",
+    )
+
     # doctor — environment and connectivity check
     sub.add_parser("doctor", help="Check environment, credentials, and connectivity.")
 
@@ -184,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="Publish live instead of saving as draft. Never inferred implicitly.",
+    )
+    approve_publish.add_argument(
+        "--attach",
+        metavar="FILE",
+        nargs="+",
+        dest="attach_files",
+        help="Attach local image/media files to the post (uploaded to WP media library).",
     )
 
     # revise — apply a revision instruction (resets approvals per PRD rules)
@@ -254,6 +283,13 @@ def main() -> int:
         if result.media_gaps:
             for gap in result.media_gaps:
                 print(f"[brewpress] warning: {gap}", file=sys.stderr)
+
+        if getattr(args, "auto_critic", False):
+            print()
+            rc = _run_critic_on_job(result.job, config, apply=False, run_eval=False)
+            if rc != 0:
+                return rc
+
         return 0
 
     # ---------------------------------------------------------------- #
@@ -315,8 +351,16 @@ def main() -> int:
         except (FileNotFoundError, ValueError) as exc:
             print(f"[brewpress] {exc}", file=sys.stderr)
             return 1
+        from pathlib import Path as _Path
+        extra_media = [_Path(f) for f in (args.attach_files or [])]
+        missing_files = [str(p) for p in extra_media if not p.is_file()]
+        if missing_files:
+            for f in missing_files:
+                print(f"[brewpress] --attach: file not found: {f}", file=sys.stderr)
+            return 1
+
         try:
-            updated_job = Orchestrator().publish(config=config)
+            updated_job = Orchestrator().publish(config=config, extra_media_paths=extra_media)
         except AmbiguousMatchError as exc:
             print(f"[brewpress] Ambiguous WP post match: {exc}", file=sys.stderr)
             return 1
@@ -438,10 +482,86 @@ def main() -> int:
     if args.command == "doctor":
         return _run_doctor()
 
+    if args.command == "critic":
+        from brewpress.config import load_config
+        from brewpress.review_gate import ReviewGate
+        try:
+            config = load_config(required=("GOOGLE_API_KEY",))
+            job = ReviewGate().review()
+        except (OSError, FileNotFoundError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        return _run_critic_on_job(
+            job, config,
+            apply=args.apply,
+            run_eval=args.run_eval,
+        )
+
     if args.command == "boost":
         return _run_boost(args)
 
     print(f"[brewpress] '{args.command}' is not yet implemented.")
+    return 0
+
+
+def _run_critic_on_job(
+    job: object,
+    config: object,
+    apply: bool,
+    run_eval: bool,
+) -> int:
+    """Run the CriticAgent on a BlogJob and display results.
+
+    Args:
+        job:      BlogJob to review.
+        config:   BrewPressConfig with GOOGLE_API_KEY.
+        apply:    When True and verdict is "revise", call ReviewGate.revise().
+        run_eval: When True, also run deterministic boost_eval checks.
+    """
+    from brewpress.critic_agent import CriticAgent
+
+    try:
+        critic = CriticAgent(config)  # type: ignore[arg-type]
+        result = critic.review(job)  # type: ignore[arg-type]
+    except (ValueError, RuntimeError) as exc:
+        print(f"[brewpress] Critic failed: {exc}", file=sys.stderr)
+        return 1
+
+    print("── Critic Review ───────────────────────────────────────────")
+    print(f"  Verdict:  {result.verdict.upper()}")
+    print(
+        f"  Scores:   SEO={result.scores.seo_quality}  "
+        f"Clarity={result.scores.clarity}  "
+        f"TechAccuracy={result.scores.technical_accuracy}  "
+        f"PublishReady={result.scores.publish_readiness}"
+    )
+    if result.failures:
+        print("  Issues:")
+        for issue in result.failures:
+            print(f"    • {issue}")
+    if result.revision_instruction:
+        print(f"  Fix:      {result.revision_instruction}")
+    print()
+
+    if run_eval:
+        from brewpress.boost_eval import run_checks
+        eval_result = run_checks(job)  # type: ignore[arg-type]
+        print("── Deterministic Checks ────────────────────────────────────")
+        print(eval_result)
+        print()
+
+    if not result.is_pass() and apply:
+        from brewpress.review_gate import ReviewGate
+        try:
+            ReviewGate().revise(result.revision_instruction)
+            print(
+                "[brewpress] Revision instruction applied. "
+                "Run 'brewpress draft' (with same args) to regenerate."
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] Could not apply revision: {exc}", file=sys.stderr)
+            return 1
+
     return 0
 
 

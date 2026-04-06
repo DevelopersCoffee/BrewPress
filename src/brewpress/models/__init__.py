@@ -68,6 +68,10 @@ class BlogJob(BaseModel):
     quality_score: int | None = None
     quality_gaps: list[str] = Field(default_factory=list)
 
+    # Narrative structure fields — from storytelling prompt layer
+    hook: str = ""   # 2–3 sentence opening hook (Problem → Solution)
+    cta: str = ""    # call-to-action closing sentence
+
     # Approval timestamps
     content_approved_at: str | None = None
     publish_approved_at: str | None = None

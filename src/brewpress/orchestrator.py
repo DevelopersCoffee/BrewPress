@@ -188,6 +188,7 @@ class Orchestrator:
         self,
         config: BrewPressConfig | None = None,
         bundle_dir: Path | None = None,
+        extra_media_paths: list[Path] | None = None,
     ) -> BlogJob:
         """Publish the APPROVED_STEP_2 job to WordPress.
 
@@ -235,18 +236,34 @@ class Orchestrator:
 
         # Upload featured image for code posts when screenshots are available.
         # Uses the terminal screenshot (most legible) as the post hero image.
+        from brewpress.wp_client import UploadedMedia
+
         featured_media_id: int | None = None
         if job.is_code_post:
             media_dir = self._media_base / job.job_id
             screenshots = sorted(media_dir.glob("terminal_*.png")) if media_dir.is_dir() else []
             if screenshots:
                 try:
-                    featured_media_id = client.upload_image_file(screenshots[0])
+                    hero = client.upload_image_file(screenshots[0])
+                    featured_media_id = hero.id
                 except PublishError:
                     pass  # media upload failure is non-fatal; post continues without hero
 
+        # Upload any manually attached media files (e.g. diagrams, extra screenshots).
+        gallery_media: list[UploadedMedia] = []
+        for media_path in (extra_media_paths or []):
+            if media_path.is_file():
+                try:
+                    gallery_media.append(client.upload_image_file(media_path))
+                except PublishError:
+                    pass  # non-fatal; continue without this file
+
         try:
-            updated_job = client.publish(job, featured_media_id=featured_media_id)
+            updated_job = client.publish(
+                job,
+                featured_media_id=featured_media_id,
+                gallery_media=gallery_media or None,
+            )
         except PublishError:
             _bundle_dir.mkdir(parents=True, exist_ok=True)
             bundle_path = _bundle_dir / f"failure_bundle_{job.job_id[:8]}.json"

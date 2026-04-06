@@ -47,7 +47,7 @@ _DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 # ------------------------------------------------------------------ #
 
 _WRITING_RULES = textwrap.dedent("""\
-    Writing rules (non-negotiable):
+    ## Writing rules (non-negotiable)
     - Lead with value. First sentence tells the reader what they will learn or do.
     - Short paragraphs: 2–3 sentences max. One idea per paragraph.
     - Active voice. No "it can be seen that", "it is important to note".
@@ -58,6 +58,25 @@ _WRITING_RULES = textwrap.dedent("""\
     - Do not invent facts. Only state what the provided context supports.
     - Internal tone: confident, direct, slightly opinionated, technically exact.
     - Audience: mid-to-senior backend developers. No hand-holding, no basics recap.
+
+    ## Post structure (Problem → Solution → Expansion)
+    Follow this arc unless the content clearly dictates otherwise:
+
+    1. Hook (intro): Start in the middle of the problem or at a moment of friction.
+       State what the reader will build or learn. 2–3 tight sentences. No throat-clearing.
+    2. Prerequisites / Setup: List what the reader needs before starting.
+    3. Core walkthrough: Show the working code or configuration first, then explain it.
+       "Here is what changed — here is why it works" beats theory-before-code.
+    4. Running / debugging section: Show real terminal output. Describe the "Aha!" moment.
+    5. Leveling up (optional): One advanced pattern or real-world extension.
+    6. Summary + CTA: What did we learn? Give one clear next step or challenge.
+
+    ## Storytelling
+    - Audiences remember stories 22× more than lists of facts.
+    - Show, don't just tell: "The terminal flickered with life" > "it worked".
+    - Address the reader as "you" — they are the hero, not you.
+    - Share real friction: errors, wrong turns, and fixes make posts credible.
+    - Control pacing: short sentences for high-tension moments; longer for explanation.
 """)
 
 
@@ -153,6 +172,18 @@ class DraftSchema(BaseModel):
         description=(
             "Specific gaps that lower quality_score. "
             "Empty when quality_score is 90+."
+        )
+    )
+    hook: str = Field(
+        description=(
+            "2–3 sentence opening hook. Starts in the middle of the problem. "
+            "Tells the reader exactly what they will learn or build. No fluff."
+        )
+    )
+    cta: str = Field(
+        description=(
+            "1–2 sentence call-to-action at the end. "
+            "Gives the reader a clear next challenge or resource."
         )
     )
 
@@ -308,6 +339,8 @@ def draft_to_job(draft: DraftSchema) -> BlogJob:
         is_single_topic=draft.is_single_topic,
         quality_score=draft.quality_score,
         quality_gaps=draft.quality_gaps,
+        hook=draft.hook,
+        cta=draft.cta,
     )
 
 

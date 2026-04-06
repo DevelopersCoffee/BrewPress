@@ -49,6 +49,8 @@ def _valid_draft_dict(**overrides: object) -> dict:
         "categories": ["Java", "Backend"],
         "quality_score": 85,
         "quality_gaps": ["missing benchmark numbers"],
+        "hook": "Virtual threads arrived in Java 21. This post shows you exactly how to use them.",
+        "cta": "Try adding virtual thread support to your Spring Boot service this week.",
     }
     base.update(overrides)
     return base
