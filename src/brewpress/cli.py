@@ -81,6 +81,80 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of suggestions to return (default: 5).",
     )
 
+    # boost — Blog Boost Assistant: SEO audit, rewrite, feedback, topics, etc.
+    boost = sub.add_parser(
+        "boost",
+        help="Run the Blog Boost Assistant (SEO audit, rewrite, feedback, topics, …).",
+    )
+    boost.add_argument(
+        "task",
+        metavar="TASK",
+        choices=[
+            "seo_audit",
+            "rewrite",
+            "title_suggestions",
+            "meta_description",
+            "content_feedback",
+            "topic_ideas",
+            "internal_linking",
+            "engagement_message",
+        ],
+        help=(
+            "Task to perform: seo_audit | rewrite | title_suggestions | "
+            "meta_description | content_feedback | topic_ideas | "
+            "internal_linking | engagement_message"
+        ),
+    )
+    boost.add_argument(
+        "--content",
+        default="",
+        metavar="TEXT_OR_PATH",
+        help="Blog post content (inline text or path to a .md file).",
+    )
+    boost.add_argument(
+        "--keywords",
+        nargs="+",
+        default=[],
+        metavar="KW",
+        help="Target keywords (e.g. --keywords 'spring boot' 'caching').",
+    )
+    boost.add_argument(
+        "--audience",
+        default="mid-to-senior backend developers",
+        metavar="DESC",
+        help="Target audience description.",
+    )
+    boost.add_argument(
+        "--tone",
+        default="professional, friendly, developer-focused",
+        metavar="DESC",
+        help="Desired writing tone.",
+    )
+    boost.add_argument(
+        "--word-count",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Target word count for rewrite tasks.",
+    )
+    boost.add_argument(
+        "--format",
+        choices=["blog", "email", "social"],
+        default="blog",
+        help="Output format for engagement_message tasks (default: blog).",
+    )
+    boost.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Emit the full BoostResult as JSON instead of human-readable output.",
+    )
+    boost.add_argument(
+        "--from-draft",
+        action="store_true",
+        help="Load content from the current saved draft (~/.brewpress/last_draft.json).",
+    )
+
     # calibrate — fetch recent posts and build a tone fingerprint
     calibrate = sub.add_parser(
         "calibrate",
@@ -364,7 +438,100 @@ def main() -> int:
     if args.command == "doctor":
         return _run_doctor()
 
+    if args.command == "boost":
+        return _run_boost(args)
+
     print(f"[brewpress] '{args.command}' is not yet implemented.")
+    return 0
+
+
+def _run_boost(args: argparse.Namespace) -> int:  # noqa: PLR0912
+    """Run the Blog Boost Assistant for the requested task."""
+    import json as _json
+    import os
+
+    from brewpress.blog_boost import BlogBoostAgent, BoostRequest
+    from brewpress.config import load_config
+
+    # Resolve content: --from-draft, --content PATH, or inline --content TEXT
+    content = args.content or ""
+    if args.from_draft:
+        from brewpress.state_store import StateStore
+        try:
+            job = StateStore().load()
+            content = job.draft_body_md or ""
+        except FileNotFoundError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+    elif content and os.path.isfile(content):
+        try:
+            from pathlib import Path
+            content = Path(content).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"[brewpress] Cannot read file: {exc}", file=sys.stderr)
+            return 1
+
+    # Load config (only needs GOOGLE_API_KEY)
+    try:
+        config = load_config(required=("GOOGLE_API_KEY",))
+    except OSError as exc:
+        print(f"[brewpress] {exc}", file=sys.stderr)
+        return 1
+
+    request = BoostRequest(
+        task_type=args.task,
+        content=content,
+        keywords=args.keywords,
+        target_audience=args.audience,
+        tone=args.tone,
+        word_count=args.word_count,
+        format=args.format,
+    )
+
+    try:
+        agent = BlogBoostAgent(config)
+        result = agent.run(request)
+    except (ValueError, RuntimeError) as exc:
+        print(f"[brewpress] Boost failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.output_json:
+        print(_json.dumps(result.to_json(), indent=2, ensure_ascii=False))
+        return 0
+
+    # Human-readable output
+    if result.optimized_content:
+        print(result.optimized_content)
+        print()
+
+    seo = result.seo_suggestions
+    if any([seo.keywords_used, seo.missing_keywords, seo.title_feedback,
+            seo.meta_description, seo.readability_score]):
+        print("── SEO ─────────────────────────────────────────────────────")
+        if seo.title_feedback:
+            print(f"Title:       {seo.title_feedback}")
+        if seo.meta_description:
+            print(f"Meta:        {seo.meta_description}")
+        if seo.readability_score:
+            print(f"Readability: {seo.readability_score}")
+        if seo.keywords_used:
+            print(f"Keywords ✓:  {', '.join(seo.keywords_used)}")
+        if seo.missing_keywords:
+            print(f"Keywords ✗:  {', '.join(seo.missing_keywords)}")
+        print()
+
+    if result.structure_improvements:
+        print("── Structure ───────────────────────────────────────────────")
+        for item in result.structure_improvements:
+            print(f"  • {item}")
+        print()
+
+    if result.engagement_tips:
+        print("── Engagement ──────────────────────────────────────────────")
+        for tip in result.engagement_tips:
+            print(f"  • {tip}")
+        print()
+
     return 0
 
 
