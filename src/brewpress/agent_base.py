@@ -33,10 +33,19 @@ make LLM usage visible in code review.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential_jitter
+
 from brewpress.config import BrewPressConfig
+
+
+def _is_retryable_llm_error(exc: BaseException) -> bool:
+    """Return True for transient Gemini API errors (429 rate-limit, 5xx server)."""
+    msg = str(exc)
+    return "429" in msg or any(msg.startswith(code) for code in ("500", "502", "503"))
 
 # ------------------------------------------------------------------ #
 # Skill loader                                                         #
@@ -78,7 +87,7 @@ def _find_skill(relative: str | Path) -> Path:
 # BaseAgent                                                            #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
+_DEFAULT_MODEL = os.environ.get("BREWPRESS_MODEL", "gemini-2.0-flash")
 
 
 class BaseAgent:
@@ -200,12 +209,21 @@ class BaseAgent:
         if response_schema is not None:
             kwargs["response_schema"] = response_schema
 
-        response = self._llm_client.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=self._llm_types.GenerateContentConfig(**kwargs),
-        )
+        config = self._llm_types.GenerateContentConfig(**kwargs)
+        response = self._call_llm(self._model, prompt, config)
         return response.text or ""
+
+    @retry(
+        retry=retry_if_exception(_is_retryable_llm_error),
+        stop=stop_after_attempt(3),
+        wait=wait_exponential_jitter(initial=2, max=30),
+        reraise=True,
+    )
+    def _call_llm(self, model: str, contents: str, config: Any) -> Any:
+        """Single LLM call with tenacity retry on 429/5xx."""
+        return self._llm_client.models.generate_content(
+            model=model, contents=contents, config=config
+        )
 
     def _ensure_llm(self) -> None:
         if self._llm_client is not None:
