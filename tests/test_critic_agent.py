@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -53,9 +54,12 @@ def _make_agent(response_dict: dict) -> CriticAgent:
     mock_resp = MagicMock()
     mock_resp.text = json.dumps(response_dict)
     mock_client.models.generate_content.return_value = mock_resp
-    agent._client = mock_client
+    agent._llm_client = mock_client       # BaseAgent attr name
+    agent._llm_types = MagicMock()        # BaseAgent attr name
     agent._model = "gemini-2.0-flash"
-    agent._types = MagicMock()
+    agent._config = MagicMock()
+    agent._skill_path = Path("skills/critic.md")
+    agent._skill_text = None
     return agent
 
 
@@ -186,11 +190,11 @@ def test_prompt_truncates_long_body() -> None:
     assert "truncated" in prompt
 
 
-def test_prompt_includes_json_schema() -> None:
+def test_prompt_includes_key_fields() -> None:
     job = _job()
     prompt = _build_critic_prompt(job)
-    assert "seo_quality" in prompt
-    assert "verdict" in prompt
+    assert job.title in prompt
+    assert job.primary_keyword in prompt
 
 
 # ------------------------------------------------------------------ #
@@ -261,8 +265,10 @@ def test_agent_raises_without_api_key() -> None:
     from brewpress.config import BrewPressConfig
 
     cfg = BrewPressConfig()
+    agent = CriticAgent(cfg)
+    # think() is the only place GOOGLE_API_KEY is enforced (lazy LLM init)
     with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
-        CriticAgent(cfg)
+        agent.think("test")
 
 
 # ------------------------------------------------------------------ #
@@ -288,20 +294,13 @@ def test_review_calls_model_with_job_title() -> None:
     agent = _make_agent(_PASS_RESPONSE)
     job = _job()
     agent.review(job)
-    call = agent._client.models.generate_content.call_args
+    call = agent._llm_client.models.generate_content.call_args
     contents = call[1].get("contents") or call[0][1]
     assert job.title in contents
 
 
 def test_review_raises_on_bad_json() -> None:
-    agent = object.__new__(CriticAgent)
-    mock_client = MagicMock()
-    mock_resp = MagicMock()
-    mock_resp.text = "not json"
-    mock_client.models.generate_content.return_value = mock_resp
-    agent._client = mock_client
-    agent._model = "gemini-2.0-flash"
-    agent._types = MagicMock()
-
+    agent = _make_agent({})
+    agent._llm_client.models.generate_content.return_value.text = "not json"
     with pytest.raises(ValueError, match="invalid JSON"):
         agent.review(_job())

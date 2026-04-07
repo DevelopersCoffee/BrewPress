@@ -1,8 +1,9 @@
-"""Orchestrator — end-to-end pipeline wiring for BrewPress MVP.
+"""Orchestrator — end-to-end pipeline wiring for BrewPress GA.
 
 Connects every agent and module into two callable pipelines:
 
-    draft()    ingest → DraftAgent → ExecutionLayer → MediaAgent → StateStore
+    draft()    ingest → WriterAgent → StructurerAgent → SEOAgent → CriticAgent (loop)
+               → ExecutionLayer → MediaAgent → StateStore
     publish()  StateStore → WordPressClient → StateStore (or failure bundle)
 
 All dependencies are injected at construction time, which keeps each
@@ -13,20 +14,25 @@ The two pipelines map directly to the CLI commands:
     brewpress draft ...          → Orchestrator.draft()
     brewpress approve-publish    → Orchestrator.publish()
 
+Revision loop:
+    CriticAgent returns verdict "pass" or "revise".
+    On "revise", all 4 agents re-run with the revision_instruction injected into
+    WriterAgent.  Maximum MAX_REVISIONS=3 iterations.  If the critic has not passed
+    after 3 iterations, the job is rejected with reason "max_revisions_exceeded".
+
 Determinism guarantee:
     State transitions are 1-to-1 with the BlogJob state machine.
     No AI calls happen outside draft().
     No WP network calls happen outside publish().
-    No command runs without the user having provided it via notes or diff.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from brewpress.config import BrewPressConfig
-from brewpress.draft_agent import DraftAgent
 from brewpress.execution_layer import run_commands
 from brewpress.media_agent import generate_for_code_post, validate_code_post_media
 from brewpress.models import BlogJob
@@ -40,8 +46,36 @@ from brewpress.wp_client import (
     generate_failure_bundle,
 )
 
+if TYPE_CHECKING:
+    from brewpress.writer_agent import WriterAgent
+    from brewpress.structurer_agent import StructurerAgent
+    from brewpress.seo_agent import SEOAgent
+    from brewpress.critic_agent import CriticAgent
+
+MAX_REVISIONS: int = 3
+
 # Default media output directory — one subdirectory per job_id.
 _DEFAULT_MEDIA_BASE = Path.home() / ".brewpress" / "media"
+
+
+# ------------------------------------------------------------------ #
+# Pipeline bundle                                                       #
+# ------------------------------------------------------------------ #
+
+
+@dataclass
+class PipelineAgents:
+    """Bundle of the 4 draft-pipeline agents.
+
+    Pass to Orchestrator.__init__ for dependency injection (testing, etc.).
+    When None is passed to Orchestrator, agents are built from config at
+    draft() call time.
+    """
+
+    writer: "WriterAgent | None" = field(default=None)
+    structurer: "StructurerAgent | None" = field(default=None)
+    seo: "SEOAgent | None" = field(default=None)
+    critic: "CriticAgent | None" = field(default=None)
 
 
 # ------------------------------------------------------------------ #
@@ -55,6 +89,7 @@ class DraftResult:
 
     job: BlogJob
     media_gaps: list[str]  # empty = all media requirements met
+    pipeline_summary: str = ""  # CLI-3: "[pipeline] N rounds | seo: 5, ..."
 
 
 # ------------------------------------------------------------------ #
@@ -63,28 +98,26 @@ class DraftResult:
 
 
 class Orchestrator:
-    """Wire all agents together for the BrewPress MVP pipeline.
+    """Wire all agents together for the BrewPress GA pipeline.
 
     Args:
-        store:        StateStore for job persistence.
-        draft_agent:  Pre-built DraftAgent.  When None, one is constructed
-                      from the ``config`` passed to draft().
-        wp_client:    Pre-built WordPressClient.  When None, one is
-                      constructed from the ``config`` passed to publish().
-        media_base:   Base directory for media output.  Defaults to
-                      ~/.brewpress/media/.
+        store:     StateStore for job persistence.
+        pipeline:  Pre-built PipelineAgents.  When None, agents are
+                   constructed from the config passed to draft().
+        wp_client: Pre-built WordPressClient.
+        media_base: Base directory for media output.
     """
 
     def __init__(
         self,
         store: StateStore | None = None,
-        draft_agent: DraftAgent | None = None,
+        pipeline: PipelineAgents | None = None,
         wp_client: WordPressClient | None = None,
         wp_agent: WordPressAgent | None = None,
         media_base: Path | None = None,
     ) -> None:
         self._store = store or StateStore()
-        self._draft_agent = draft_agent
+        self._pipeline = pipeline
         self._wp_client = wp_client
         self._wp_agent = wp_agent
         self._media_base = media_base or _DEFAULT_MEDIA_BASE
@@ -106,46 +139,63 @@ class Orchestrator:
         """Run the full draft generation pipeline.
 
         Steps:
-            1. Normalize inputs into a WorkContext (Stack 3).
-            2. Generate a structured BlogJob via DraftAgent (Stack 4).
-            3. Run extracted shell commands via ExecutionLayer (Stack 7).
-            4. Capture terminal + output proof screenshots (Stack 7).
-            5. Save the job and transition to REVIEWED so the user can
-               immediately run approve-content.
-
-        Args:
-            topic:     Blog topic or angle (required when diff_path is None).
-            notes:     Work notes or additional context.
-            diff_path: Path to a local git diff file.
-            pr_url:    GitHub PR URL (stored, not fetched in MVP).
-            force:     Bypass is_single_topic check and missing-media warning.
-            config:    BrewPressConfig with GOOGLE_API_KEY.  Required when
-                       draft_agent was not injected.
+            1. Normalize inputs into a WorkContext.
+            2. Run 4-agent pipeline: Writer → Structurer → SEO → Critic (loop).
+            3. On critic "revise": store revision_instruction, increment
+               revision_attempt, re-run all 4 agents.  Max MAX_REVISIONS times.
+            4. On max revisions exceeded: reject the job.
+            5. Run ExecutionLayer + MediaAgent for code posts.
+            6. Transition to REVIEWED and optionally auto-approve.
 
         Returns:
-            DraftResult with the REVIEWED job and any media gap strings.
-            Gap strings are warnings, not hard failures (unless force=False
-            and the job is a code post without any runnable commands).
+            DraftResult with the REVIEWED (or APPROVED_STEP_1) job,
+            media_gaps list, and pipeline_summary string.
 
         Raises:
-            ValueError: draft_agent not injected and config not provided.
-            ValueError: DraftAgent.generate() raises (model error or
-                        multi-topic guard without force=True).
+            ValueError: Neither pipeline nor config provided.
+            ValueError: WriterAgent flagged multi-topic and force=False.
             FileNotFoundError: diff_path provided but file does not exist.
         """
         ctx = ingest(topic, notes, diff_path, pr_url)
+        agents = self._resolve_pipeline(config)
 
-        agent = self._draft_agent
-        if agent is None:
-            if config is None:
-                raise ValueError(
-                    "Orchestrator.draft() requires either an injected draft_agent "
-                    "or a BrewPressConfig with GOOGLE_API_KEY."
+        # ---- 4-agent revision loop ---------------------------------- #
+        job = BlogJob()
+        pipeline_summary = ""
+
+        for attempt in range(MAX_REVISIONS):
+            if attempt == 0:
+                job = agents.writer.generate(ctx, force=force)
+            else:
+                job = agents.writer.generate_revision(job, ctx)
+
+            job = agents.structurer.structure(job)
+            job = agents.seo.optimize(job)
+            critic_result = agents.critic.review(job)
+
+            if critic_result.is_pass():
+                scores = critic_result.scores
+                rounds = attempt + 1
+                pipeline_summary = (
+                    f"[pipeline] {rounds} round{'s' if rounds > 1 else ''} | "
+                    f"seo: {scores.seo_quality}, clarity: {scores.clarity}, "
+                    f"tech_accuracy: {scores.technical_accuracy}, "
+                    f"readiness: {scores.publish_readiness}"
                 )
-            agent = DraftAgent(config)
+                break
 
-        job = agent.generate(ctx, force=force)
+            # Critic said revise — store instruction and loop
+            job = job.model_copy(update={
+                "revise_instruction": critic_result.revision_instruction,
+                "revision_attempt": attempt + 1,
+            })
+        else:
+            # Exhausted all attempts without a pass
+            rejected = job.reject(reason="max_revisions_exceeded")
+            self._store.save(rejected)
+            return DraftResult(job=rejected, media_gaps=[], pipeline_summary="")
 
+        # ---- ExecutionLayer + MediaAgent (code posts) --------------- #
         media_gaps: list[str] = []
         media_output_dir = self._media_base / job.job_id
 
@@ -153,32 +203,64 @@ class Orchestrator:
             trace = run_commands(ctx.commands, job_id=job.job_id)
             manifest = generate_for_code_post(job.job_id, trace, media_output_dir)
             media_gaps = validate_code_post_media(manifest)
-
         elif ctx.is_code_post and not ctx.commands:
-            # Code post detected (diff or PR URL present) but no $ commands
-            # in the notes/diff.  Screenshots cannot be auto-generated.
             media_gaps = [
                 "Code post with no runnable commands — "
                 "add '$ <command>' lines to your notes to enable "
                 "terminal and output proof screenshot capture."
             ]
 
-        # Tag the job with content-type for downstream use (publish, linking).
         job = job.model_copy(update={"is_code_post": ctx.is_code_post})
 
-        # Save in DRAFT state, then immediately transition to REVIEWED.
-        # The user sees the draft on the same invocation and can run
-        # approve-content without a separate `brewpress review` call.
+        # ---- Transition to REVIEWED --------------------------------- #
         self._store.save(job)
         gate = ReviewGate(store=self._store)
         reviewed_job = gate.review()
 
-        # --auto-approve: immediately approve content after review so the user
-        # can go straight to approve-publish without a separate command.
         if auto_approve:
             reviewed_job = gate.approve_content()
 
-        return DraftResult(job=reviewed_job, media_gaps=media_gaps)
+        return DraftResult(
+            job=reviewed_job,
+            media_gaps=media_gaps,
+            pipeline_summary=pipeline_summary,
+        )
+
+    def _resolve_pipeline(self, config: BrewPressConfig | None) -> PipelineAgents:
+        """Return injected pipeline or build all 4 agents from config."""
+        if self._pipeline is not None:
+            p = self._pipeline
+            missing = [
+                name for name, agent in [
+                    ("writer", p.writer), ("structurer", p.structurer),
+                    ("seo", p.seo), ("critic", p.critic),
+                ]
+                if agent is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"PipelineAgents is missing: {', '.join(missing)}. "
+                    "Either inject all 4 agents or pass config= to build them."
+                )
+            return self._pipeline
+
+        if config is None:
+            raise ValueError(
+                "Orchestrator.draft() requires either an injected PipelineAgents "
+                "or a BrewPressConfig with GOOGLE_API_KEY."
+            )
+
+        from brewpress.writer_agent import WriterAgent
+        from brewpress.structurer_agent import StructurerAgent
+        from brewpress.seo_agent import SEOAgent
+        from brewpress.critic_agent import CriticAgent
+
+        return PipelineAgents(
+            writer=WriterAgent(config),
+            structurer=StructurerAgent(config),
+            seo=SEOAgent(config),
+            critic=CriticAgent(config),
+        )
 
     # ---------------------------------------------------------------- #
     # Publish pipeline                                                   #
@@ -196,12 +278,10 @@ class Orchestrator:
         persists the returned wp_post_id, and returns the updated job.
 
         On PublishError the failure bundle is written to bundle_dir
-        (defaults to ~/.brewpress/bundles/) before re-raising so the caller
-        can tell the user where to find it.
+        (defaults to ~/.brewpress/bundles/) before re-raising.
 
         Args:
-            config:     BrewPressConfig with WP credentials.  Required when
-                        wp_client was not injected.
+            config:     BrewPressConfig with WP credentials.
             bundle_dir: Directory for the failure bundle JSON file.
 
         Returns:
@@ -211,8 +291,7 @@ class Orchestrator:
             FileNotFoundError:   No draft exists in StateStore.
             ValueError:          Job is not in APPROVED_STEP_2 state, OR
                                  wp_client not injected and config not provided.
-            AmbiguousMatchError: Multiple WP posts match — caller must set
-                                 target_wp_post_id and retry.
+            AmbiguousMatchError: Multiple WP posts match.
             PublishError:        WP API call failed; bundle written to bundle_dir.
         """
         job = self._store.load()
@@ -234,8 +313,6 @@ class Orchestrator:
 
         _bundle_dir = bundle_dir or (Path.home() / ".brewpress" / "bundles")
 
-        # Upload featured image for code posts when screenshots are available.
-        # Uses the terminal screenshot (most legible) as the post hero image.
         from brewpress.wp_client import UploadedMedia
 
         featured_media_id: int | None = None
@@ -247,16 +324,15 @@ class Orchestrator:
                     hero = client.upload_image_file(screenshots[0])
                     featured_media_id = hero.id
                 except PublishError:
-                    pass  # media upload failure is non-fatal; post continues without hero
+                    pass
 
-        # Upload any manually attached media files (e.g. diagrams, extra screenshots).
         gallery_media: list[UploadedMedia] = []
         for media_path in (extra_media_paths or []):
             if media_path.is_file():
                 try:
                     gallery_media.append(client.upload_image_file(media_path))
                 except PublishError:
-                    pass  # non-fatal; continue without this file
+                    pass
 
         try:
             updated_job = client.publish(

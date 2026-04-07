@@ -280,6 +280,8 @@ def main() -> int:
             return 1
         from brewpress.review_gate import format_draft
         print(format_draft(result.job))
+        if result.pipeline_summary:
+            print(result.pipeline_summary)
         if result.media_gaps:
             for gap in result.media_gaps:
                 print(f"[brewpress] warning: {gap}", file=sys.stderr)

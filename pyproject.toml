@@ -36,6 +36,7 @@ dependencies = [
   "markdown>=3.0",
   "Pillow>=10.0",
   "python-dotenv>=1.0",
+  "tenacity>=8.0",
 ]
 
 [project.optional-dependencies]

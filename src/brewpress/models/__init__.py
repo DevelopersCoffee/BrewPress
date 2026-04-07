@@ -86,8 +86,9 @@ class BlogJob(BaseModel):
     # Content type — True when diff/PR URL/commands are present (PRD §Content Types)
     is_code_post: bool = False
 
-    # Revision — instruction stored for re-generation pass
+    # Revision — instruction and loop iteration counter
     revise_instruction: str = ""
+    revision_attempt: int = 0  # incremented per loop pass in Orchestrator
 
     # Rejection
     rejected_reason: str = ""
