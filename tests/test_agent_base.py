@@ -237,3 +237,106 @@ def test_llm_client_initialized_after_think_call(tmp_path: Path) -> None:
             agent.think("hello")
 
     assert agent._llm_client is mock_client
+
+
+# ------------------------------------------------------------------ #
+# tenacity retry — 429 and 5xx resilience                              #
+# ------------------------------------------------------------------ #
+
+def test_think_retries_on_429_and_succeeds(tmp_path: Path) -> None:
+    """LLM raises 429 twice, succeeds on 3rd attempt — think() returns result."""
+    agent = _make_agent(tmp_path)
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = "final result"
+
+    call_count = 0
+
+    def _side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise RuntimeError("429 Too Many Requests")
+        return mock_resp
+
+    mock_client.models.generate_content.side_effect = _side_effect
+    agent._llm_client = mock_client
+    agent._llm_types = MagicMock()
+
+    result = agent.think("prompt")
+    assert result == "final result"
+    assert call_count == 3
+
+
+def test_think_reraises_after_3_consecutive_failures(tmp_path: Path) -> None:
+    """LLM always raises 429 — tenacity gives up after 3 attempts, re-raises."""
+    agent = _make_agent(tmp_path)
+
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = RuntimeError("429 Too Many Requests")
+    agent._llm_client = mock_client
+    agent._llm_types = MagicMock()
+
+    with pytest.raises(RuntimeError, match="429"):
+        agent.think("prompt")
+
+    assert mock_client.models.generate_content.call_count == 3
+
+
+def test_think_retries_on_503(tmp_path: Path) -> None:
+    """503 server errors are also retryable."""
+    agent = _make_agent(tmp_path)
+
+    mock_client = MagicMock()
+    mock_resp = MagicMock()
+    mock_resp.text = "recovered"
+
+    call_count = 0
+
+    def _side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("503 Service Unavailable")
+        return mock_resp
+
+    mock_client.models.generate_content.side_effect = _side_effect
+    agent._llm_client = mock_client
+    agent._llm_types = MagicMock()
+
+    result = agent.think("prompt")
+    assert result == "recovered"
+    assert call_count == 2
+
+
+def test_think_does_not_retry_on_400(tmp_path: Path) -> None:
+    """400 errors are not retryable — should raise immediately."""
+    from brewpress.agent_base import _is_retryable_llm_error
+
+    err = RuntimeError("400 Bad Request: invalid parameter")
+    assert not _is_retryable_llm_error(err)
+
+
+def test_is_retryable_true_for_429() -> None:
+    from brewpress.agent_base import _is_retryable_llm_error
+
+    assert _is_retryable_llm_error(RuntimeError("429 Too Many Requests"))
+
+
+def test_is_retryable_true_for_500() -> None:
+    from brewpress.agent_base import _is_retryable_llm_error
+
+    assert _is_retryable_llm_error(RuntimeError("500 Internal Server Error"))
+
+
+def test_is_retryable_true_for_502() -> None:
+    from brewpress.agent_base import _is_retryable_llm_error
+
+    assert _is_retryable_llm_error(RuntimeError("502 Bad Gateway"))
+
+
+def test_is_retryable_false_for_401() -> None:
+    from brewpress.agent_base import _is_retryable_llm_error
+
+    assert not _is_retryable_llm_error(RuntimeError("401 Unauthorized"))

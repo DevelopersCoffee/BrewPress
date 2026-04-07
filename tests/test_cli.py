@@ -195,3 +195,79 @@ def test_no_command_prints_help(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 0
     out = capsys.readouterr().out
     assert "usage" in out.lower() or "COMMAND" in out
+
+
+# ------------------------------------------------------------------ #
+# draft — pipeline_summary output                                      #
+# ------------------------------------------------------------------ #
+
+
+def test_draft_prints_pipeline_summary_when_present(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path,
+) -> None:
+    """CLI prints pipeline_summary from DraftResult when non-empty."""
+    import sys
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+
+    from brewpress.models import BlogJob
+    from brewpress.orchestrator import DraftResult
+
+    reviewed_job = BlogJob(
+        title="Java 21 Virtual Threads",
+        slug="java-21-virtual-threads",
+        meta_description="A guide to virtual threads.",
+        draft_body_md="# Java 21 Virtual Threads\n\nContent here.",
+    )
+
+    mock_result = DraftResult(
+        job=reviewed_job,
+        media_gaps=[],
+        pipeline_summary="[pipeline] 2 rounds | seo: 4, clarity: 5, tech_accuracy: 4, readiness: 4",
+    )
+
+    sys.argv = ["brewpress", "draft", "--topic", "Java virtual threads"]
+
+    with (
+        patch("brewpress.config.load_config", return_value=MagicMock(google_api_key="fake")),
+        patch("brewpress.orchestrator.Orchestrator.draft", return_value=mock_result),
+    ):
+        rc = main()
+
+    out = capsys.readouterr().out
+    assert "[pipeline]" in out
+    assert "2 rounds" in out
+    assert "seo: 4" in out
+
+
+def test_draft_does_not_print_pipeline_summary_when_empty(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path,
+) -> None:
+    """CLI does not print pipeline_summary when it is empty string."""
+    import sys
+    from unittest.mock import MagicMock, patch
+
+    from brewpress.models import BlogJob
+    from brewpress.orchestrator import DraftResult
+
+    reviewed_job = BlogJob(
+        title="Some Post",
+        slug="some-post",
+        meta_description="A post.",
+        draft_body_md="# Some Post\n\nContent.",
+    )
+
+    mock_result = DraftResult(job=reviewed_job, media_gaps=[], pipeline_summary="")
+
+    sys.argv = ["brewpress", "draft", "--topic", "Some topic"]
+
+    with (
+        patch("brewpress.config.load_config", return_value=MagicMock(google_api_key="fake")),
+        patch("brewpress.orchestrator.Orchestrator.draft", return_value=mock_result),
+    ):
+        rc = main()
+
+    out = capsys.readouterr().out
+    assert "[pipeline]" not in out
