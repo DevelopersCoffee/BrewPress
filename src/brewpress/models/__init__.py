@@ -86,6 +86,9 @@ class BlogJob(BaseModel):
     # Content type — True when diff/PR URL/commands are present (PRD §Content Types)
     is_code_post: bool = False
 
+    # SEO score — set by SEOAgent.optimize(), used by CriticAgent for deterministic seo_quality
+    seo_score: int | None = None
+
     # Revision — instruction and loop iteration counter
     revise_instruction: str = ""
     revision_attempt: int = 0  # incremented per loop pass in Orchestrator
