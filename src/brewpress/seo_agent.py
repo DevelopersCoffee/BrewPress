@@ -15,7 +15,6 @@ Pipeline position:
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +26,6 @@ from brewpress.models import BlogJob
 _MAX_BODY_CHARS = 6_000
 _SEO_FAST_PATH_THRESHOLD = 85
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
-
 
 class _SEOSchema(BaseModel):
     """Structured output schema — forces proper JSON escaping of markdown content."""
@@ -36,19 +33,6 @@ class _SEOSchema(BaseModel):
     title: str
     meta_description: str
     draft_body_md: str
-
-
-def _extract_json(raw: str) -> str:
-    text = raw.strip().lstrip("\ufeff").strip()
-    if text.startswith("{"):
-        return text
-    text = _JSON_FENCE_RE.sub("", text, count=1).strip()
-    if text.startswith("{"):
-        return text.rstrip("`").rstrip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
 
 
 def _build_prompt(job: BlogJob, seo_result: dict[str, Any]) -> str:
@@ -136,15 +120,17 @@ class SEOAgent(BaseAgent):
         # On revision passes (revision_attempt > 0), always validate — WriterAgent rewrites
         # can silently drop keyword placement even when the structural issues are fixed.
         if score >= _SEO_FAST_PATH_THRESHOLD and job.revision_attempt == 0:
-            return job
+            return job.model_copy(update={"seo_score": score})
 
         prompt = _build_prompt(job, result)
         raw = self.think(prompt, max_output_tokens=8192, response_schema=_SEOSchema)
-        return self._apply(job, raw)
+        applied = self._apply(job, raw)
+        # Always stamp the SEO score so CriticAgent can use it deterministically.
+        return applied.model_copy(update={"seo_score": score})
 
     def _apply(self, job: BlogJob, raw: str) -> BlogJob:
         try:
-            data: dict[str, Any] = json.loads(_extract_json(raw))
+            data: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"SEOAgent returned invalid JSON: {exc}\n\nRaw (first 500 chars):\n{raw[:500]}"

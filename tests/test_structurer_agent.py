@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from brewpress.models import BlogJob
-from brewpress.structurer_agent import StructurerAgent, _build_prompt, _extract_json
+from brewpress.structurer_agent import StructurerAgent, _build_prompt
 
 
 # ------------------------------------------------------------------ #
@@ -54,20 +54,6 @@ def _make_agent(tool_result: dict, llm_response: str = "") -> StructurerAgent:
 
 def _patch_use(agent: StructurerAgent, result: dict) -> None:
     agent.use = MagicMock(return_value=result)  # type: ignore[method-assign]
-
-
-# ------------------------------------------------------------------ #
-# _extract_json                                                        #
-# ------------------------------------------------------------------ #
-
-def test_extract_json_plain_object() -> None:
-    assert _extract_json('{"draft_body_md": "x"}') == '{"draft_body_md": "x"}'
-
-
-def test_extract_json_strips_fence() -> None:
-    raw = '```json\n{"draft_body_md": "x"}\n```'
-    result = _extract_json(raw)
-    assert result.startswith("{")
 
 
 # ------------------------------------------------------------------ #

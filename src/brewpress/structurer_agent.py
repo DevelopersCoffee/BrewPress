@@ -13,7 +13,6 @@ Pipeline position:
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -29,21 +28,6 @@ class _StructurerSchema(BaseModel):
     draft_body_md: str
 
 _MAX_BODY_CHARS = 6_000
-
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
-
-
-def _extract_json(raw: str) -> str:
-    text = raw.strip().lstrip("\ufeff").strip()
-    if text.startswith("{"):
-        return text
-    text = _JSON_FENCE_RE.sub("", text, count=1).strip()
-    if text.startswith("{"):
-        return text.rstrip("`").rstrip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
 
 
 def _build_prompt(job: BlogJob, issues: list[str]) -> str:
@@ -101,7 +85,7 @@ class StructurerAgent(BaseAgent):
 
     def _apply(self, job: BlogJob, raw: str) -> BlogJob:
         try:
-            data: dict[str, Any] = json.loads(_extract_json(raw))
+            data: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"StructurerAgent returned invalid JSON: {exc}\n\nRaw (first 500 chars):\n{raw[:500]}"

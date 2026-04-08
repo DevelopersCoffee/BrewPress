@@ -11,7 +11,7 @@ import pytest
 from brewpress.config import BrewPressConfig
 from brewpress.models import BlogJob
 from brewpress.work_ingestion import WorkContext
-from brewpress.writer_agent import WriterAgent, _build_prompt, _extract_json
+from brewpress.writer_agent import WriterAgent, _build_prompt
 
 
 # ------------------------------------------------------------------ #
@@ -68,32 +68,6 @@ def _make_agent(response_dict: dict) -> WriterAgent:
     agent._skill_path = Path("skills/draft.md")
     agent._skill_text = "You are a writer."
     return agent
-
-
-# ------------------------------------------------------------------ #
-# _extract_json                                                        #
-# ------------------------------------------------------------------ #
-
-def test_extract_json_plain_object() -> None:
-    assert _extract_json('{"a": 1}') == '{"a": 1}'
-
-
-def test_extract_json_strips_markdown_fence() -> None:
-    raw = '```json\n{"a": 1}\n```'
-    result = _extract_json(raw)
-    assert result.startswith("{")
-
-
-def test_extract_json_strips_bom() -> None:
-    raw = '\ufeff{"a": 1}'
-    result = _extract_json(raw)
-    assert result.startswith("{")
-
-
-def test_extract_json_finds_embedded_json() -> None:
-    raw = "Some text before { \"a\": 1 } after"
-    result = _extract_json(raw)
-    assert "a" in result
 
 
 # ------------------------------------------------------------------ #

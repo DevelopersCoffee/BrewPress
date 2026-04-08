@@ -15,7 +15,6 @@ Pipeline position:
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -29,8 +28,6 @@ from brewpress.work_ingestion import WorkContext
 _MAX_BODY_CHARS = 6_000
 _MAX_DIFF_CHARS = 4_000
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
-
 
 class _WriterSchema(BaseModel):
     """Structured output schema for WriterAgent — forces proper JSON escaping."""
@@ -41,23 +38,15 @@ class _WriterSchema(BaseModel):
     excerpt: str
     primary_keyword: str
     secondary_keywords: list[str]
+    tags: list[str] = []
+    categories: list[str] = []
     outline: list[str]
     draft_body_md: str
     hook: str
     cta: str
-
-
-def _extract_json(raw: str) -> str:
-    text = raw.strip().lstrip("\ufeff").strip()
-    if text.startswith("{"):
-        return text
-    text = _JSON_FENCE_RE.sub("", text, count=1).strip()
-    if text.startswith("{"):
-        return text.rstrip("`").rstrip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
+    is_single_topic: bool = True
+    quality_score: int | None = None
+    quality_gaps: list[str] = []
 
 
 def _build_prompt(ctx: WorkContext, revise_instruction: str) -> str:
@@ -127,7 +116,7 @@ class WriterAgent(BaseAgent):
 
     def _parse(self, raw: str, force: bool) -> BlogJob:
         try:
-            data: dict[str, Any] = json.loads(_extract_json(raw))
+            data: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"WriterAgent returned invalid JSON: {exc}\n\nRaw (first 500 chars):\n{raw[:500]}"

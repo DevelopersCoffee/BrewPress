@@ -27,7 +27,6 @@ self-reported verdict is overridden if it disagrees with the scores.
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -118,8 +117,6 @@ class CriticResult:
 
 _MAX_BODY_CHARS = 6_000
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
-
 
 def _build_critic_prompt(job: BlogJob) -> str:
     body_preview = job.draft_body_md[:_MAX_BODY_CHARS]
@@ -153,22 +150,47 @@ def _build_critic_prompt(job: BlogJob) -> str:
 # ------------------------------------------------------------------ #
 
 
-def _extract_json(raw: str) -> str:
-    text = raw.strip().lstrip("\ufeff").strip()
-    if text.startswith("{"):
-        return text
-    text = _JSON_FENCE_RE.sub("", text, count=1).strip()
-    if text.startswith("{"):
-        return text.rstrip("`").rstrip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
+def _seo_score_to_quality(score: int) -> int:
+    """Map seo.full 0–100 score to CriticScores.seo_quality 1–5."""
+    if score >= 85:
+        return 5
+    if score >= 70:
+        return 4
+    if score >= 55:
+        return 3
+    if score >= 40:
+        return 2
+    return 1
+
+
+def _compute_publish_readiness(job: BlogJob) -> int:
+    """Compute publish readiness (1–5) from content signals in draft_body_md."""
+    body = job.draft_body_md
+    words = len(body.split())
+    headings = sum(1 for line in body.splitlines() if line.startswith("#"))
+    code_blocks = body.count("```") // 2
+    has_cta = bool(job.cta) or any(
+        phrase in body.lower()
+        for phrase in (
+            "follow", "subscribe", "check out", "learn more",
+            "get started", "try it", "give it a try", "let me know",
+        )
+    )
+
+    if words >= 600 and has_cta and (code_blocks >= 1 or headings >= 3):
+        return 5
+    if words >= 200 and (has_cta or code_blocks >= 1) and headings >= 2:
+        return 4
+    if words >= 200:
+        return 3
+    if words >= 80:
+        return 2
+    return 1
 
 
 def _parse_critic_response(raw: str) -> CriticResult:
     try:
-        data = json.loads(_extract_json(raw))
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Critic returned invalid JSON: {exc}\n\nRaw:\n{raw}") from exc
 
@@ -235,4 +257,23 @@ class CriticAgent(BaseAgent):
         """
         prompt = _build_critic_prompt(job)
         raw = self.think(prompt, temperature=0.2, max_output_tokens=2048, response_schema=_CriticSchema)
-        return _parse_critic_response(raw)
+        result = _parse_critic_response(raw)
+
+        # Deterministic overrides — code enforces quality signals the LLM can't reliably measure.
+        score_updates: dict[str, int] = {
+            "publish_readiness": _compute_publish_readiness(job),
+        }
+        if job.seo_score is not None:
+            score_updates["seo_quality"] = _seo_score_to_quality(job.seo_score)
+
+        updated_scores = result.scores.model_copy(update=score_updates)
+        verdict = result.verdict
+        if not updated_scores.all_pass():
+            verdict = "revise"
+
+        return CriticResult(
+            verdict=verdict,
+            revision_instruction=result.revision_instruction,
+            scores=updated_scores,
+            failures=result.failures,
+        )

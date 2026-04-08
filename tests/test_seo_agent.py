@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from brewpress.models import BlogJob
-from brewpress.seo_agent import SEOAgent, _build_prompt, _extract_json, _SEO_FAST_PATH_THRESHOLD
+from brewpress.seo_agent import SEOAgent, _build_prompt, _SEO_FAST_PATH_THRESHOLD
 
 
 # ------------------------------------------------------------------ #
@@ -90,20 +90,6 @@ def _make_agent(seo_tool_result: dict, llm_response: str = "") -> SEOAgent:
 
 
 # ------------------------------------------------------------------ #
-# _extract_json                                                        #
-# ------------------------------------------------------------------ #
-
-def test_extract_json_plain_object() -> None:
-    assert _extract_json('{"title": "x"}') == '{"title": "x"}'
-
-
-def test_extract_json_strips_fence() -> None:
-    raw = '```json\n{"title": "x"}\n```'
-    result = _extract_json(raw)
-    assert result.startswith("{")
-
-
-# ------------------------------------------------------------------ #
 # _build_prompt                                                        #
 # ------------------------------------------------------------------ #
 
@@ -158,7 +144,8 @@ def test_optimize_fast_path_skips_llm_when_score_high_first_pass() -> None:
     agent = _make_agent(seo_tool_result={**_SEO_PASS_RESULT, "score": 90})
     job = _job(revision_attempt=0)
     result = agent.optimize(job)
-    assert result is job
+    assert result.seo_score == 90  # seo_score stamped even on fast path
+    assert result.title == job.title  # content unchanged
     agent._llm_client.models.generate_content.assert_not_called()
 
 
@@ -166,7 +153,7 @@ def test_optimize_fast_path_boundary_at_threshold() -> None:
     agent = _make_agent(seo_tool_result={**_SEO_PASS_RESULT, "score": 85})
     job = _job(revision_attempt=0)
     result = agent.optimize(job)
-    assert result is job
+    assert result.seo_score == 85
 
 
 def test_optimize_calls_llm_when_score_below_threshold() -> None:
@@ -244,7 +231,9 @@ def test_optimize_returns_unchanged_job_when_llm_returns_empty_updates() -> None
     agent = _make_agent(seo_tool_result=_SEO_FAIL_RESULT, llm_response=llm_response)
     job = _job(revision_attempt=0)
     result = agent.optimize(job)
-    assert result is job  # no updates applied
+    # seo_score stamped; content fields preserved
+    assert result.seo_score == _SEO_FAIL_RESULT["score"]
+    assert result.title == job.title
 
 
 def test_optimize_passes_correct_kwargs_to_seo_tool() -> None:

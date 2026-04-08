@@ -14,7 +14,9 @@ from brewpress.critic_agent import (
     CriticResult,
     CriticScores,
     _build_critic_prompt,
+    _compute_publish_readiness,
     _parse_critic_response,
+    _seo_score_to_quality,
 )
 from brewpress.models import BlogJob
 
@@ -62,6 +64,40 @@ def _make_agent(response_dict: dict) -> CriticAgent:
     agent._skill_text = None
     return agent
 
+
+# Rich body with enough words/structure for _compute_publish_readiness to return 4+
+_RICH_BODY = (
+    "# Java 21 Virtual Threads: A Complete Guide\n\n"
+    "Java 21 introduced virtual threads as a production-ready feature that changes how developers "
+    "think about concurrency. Unlike platform threads that map one-to-one to OS threads, "
+    "virtual threads are managed by the JVM and can scale to millions without memory pressure. "
+    "For I/O-bound applications like REST APIs and database-heavy services, this changes everything.\n\n"
+    "## What Are Virtual Threads?\n\n"
+    "A virtual thread is a lightweight implementation backed by a ForkJoinPool of carrier threads. "
+    "When a virtual thread blocks waiting for I/O, the JVM unmounts it from the carrier thread "
+    "and parks it. Another virtual thread immediately takes the freed carrier. This means blocking "
+    "code runs with the concurrency of non-blocking code, but without the complexity of "
+    "reactive programming or CompletableFuture chains.\n\n"
+    "```java\n"
+    "try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {\n"
+    "    IntStream.range(0, 1_000_000).forEach(i ->\n"
+    "        executor.submit(() -> fetchFromDatabase(i))\n"
+    "    );\n"
+    "}\n"
+    "```\n\n"
+    "## When to Use Virtual Threads\n\n"
+    "Virtual threads are ideal for I/O-bound workloads: HTTP client calls, JDBC queries, "
+    "file reads, message queue consumption. Spring Boot 3.2+ supports virtual threads natively. "
+    "Set spring.threads.virtual.enabled=true in application.properties and your Tomcat executor "
+    "automatically uses virtual threads. Each incoming HTTP request runs on its own virtual thread "
+    "with no thread pool sizing required. The JVM manages scheduling entirely.\n\n"
+    "## When to Avoid Virtual Threads\n\n"
+    "Avoid virtual threads for CPU-intensive work. Hashing, compression, image processing, "
+    "or any task that burns CPU without blocking gets no benefit from virtual threads. You still "
+    "saturate all available cores. Synchronized blocks that contain blocking calls also cause "
+    "thread pinning, which degrades performance significantly under load.\n\n"
+    "Get started today — virtual threads are production-ready and worth the upgrade.\n"
+)
 
 _PASS_RESPONSE = {
     "scores": {
@@ -278,7 +314,9 @@ def test_agent_raises_without_api_key() -> None:
 
 def test_review_returns_pass_result() -> None:
     agent = _make_agent(_PASS_RESPONSE)
-    result = agent.review(_job())
+    # Use rich body so _compute_publish_readiness returns 4+ (deterministic override)
+    job = _job(draft_body_md=_RICH_BODY, cta="Get started today.")
+    result = agent.review(job)
     assert isinstance(result, CriticResult)
     assert result.is_pass()
 
@@ -304,3 +342,92 @@ def test_review_raises_on_bad_json() -> None:
     agent._llm_client.models.generate_content.return_value.text = "not json"
     with pytest.raises(ValueError, match="invalid JSON"):
         agent.review(_job())
+
+
+def test_review_overrides_seo_quality_when_job_has_seo_score() -> None:
+    """When job.seo_score is set, seo_quality is overridden deterministically."""
+    agent = _make_agent(_PASS_RESPONSE)
+    # seo_score=40 → _seo_score_to_quality → 2 (below threshold)
+    job = _job(seo_score=40, draft_body_md=_RICH_BODY, cta="Get started today.")
+    result = agent.review(job)
+    assert result.scores.seo_quality == 2
+    assert result.verdict == "revise"  # seo_quality=2 forces revise
+
+
+def test_review_overrides_publish_readiness_from_content() -> None:
+    """publish_readiness is always overridden by _compute_publish_readiness."""
+    agent = _make_agent(_PASS_RESPONSE)
+    # _PASS_RESPONSE has publish_readiness=4, but rich body → computed=4 or 5
+    job = _job(draft_body_md=_RICH_BODY, cta="Get started today.")
+    result = agent.review(job)
+    assert result.scores.publish_readiness >= 4
+
+
+def test_review_thin_body_forces_revise_via_publish_readiness() -> None:
+    """A minimal body → publish_readiness=1 → verdict overridden to revise."""
+    agent = _make_agent(_PASS_RESPONSE)
+    job = _job(draft_body_md="# Thin\n\nShort post.")
+    result = agent.review(job)
+    assert result.scores.publish_readiness < 4
+    assert result.verdict == "revise"
+
+
+# ------------------------------------------------------------------ #
+# _seo_score_to_quality                                               #
+# ------------------------------------------------------------------ #
+
+
+def test_seo_score_to_quality_85_maps_to_5() -> None:
+    assert _seo_score_to_quality(85) == 5
+
+
+def test_seo_score_to_quality_90_maps_to_5() -> None:
+    assert _seo_score_to_quality(90) == 5
+
+
+def test_seo_score_to_quality_70_maps_to_4() -> None:
+    assert _seo_score_to_quality(70) == 4
+
+
+def test_seo_score_to_quality_55_maps_to_3() -> None:
+    assert _seo_score_to_quality(55) == 3
+
+
+def test_seo_score_to_quality_40_maps_to_2() -> None:
+    assert _seo_score_to_quality(40) == 2
+
+
+def test_seo_score_to_quality_30_maps_to_1() -> None:
+    assert _seo_score_to_quality(30) == 1
+
+
+# ------------------------------------------------------------------ #
+# _compute_publish_readiness                                          #
+# ------------------------------------------------------------------ #
+
+
+def test_compute_publish_readiness_rich_body_scores_4() -> None:
+    job = _job(draft_body_md=_RICH_BODY, cta="Get started today.")
+    score = _compute_publish_readiness(job)
+    assert score >= 4
+
+
+def test_compute_publish_readiness_thin_body_scores_1() -> None:
+    job = _job(draft_body_md="# Title\n\nOne sentence.")
+    score = _compute_publish_readiness(job)
+    assert score == 1
+
+
+def test_compute_publish_readiness_uses_cta_field() -> None:
+    """cta field on BlogJob counts as has_cta signal."""
+    body = "# Post\n\n" + "Word " * 360 + "\n\n## Section\n\nContent."
+    job = _job(draft_body_md=body, cta="Subscribe for more.")
+    score = _compute_publish_readiness(job)
+    assert score >= 4
+
+
+def test_compute_publish_readiness_medium_body_scores_3() -> None:
+    body = "# Post\n\n" + "Content word " * 20 + "\n"  # ~40 words → score 2
+    job = _job(draft_body_md=body)
+    score = _compute_publish_readiness(job)
+    assert score <= 2
