@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build distribution
+  build-sdist:
+    name: Build sdist + wheel
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,21 +31,58 @@ jobs:
           name: dist
           path: dist/
 
-  github-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    needs: build
+  build-binary:
+    name: Build binary (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact: brewpress-linux-x86_64
+          - os: macos-latest
+            artifact: brewpress-macos-arm64
+          - os: windows-latest
+            artifact: brewpress-windows-x86_64.exe
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download dist artifacts
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package and PyInstaller
+        run: pip install ".[gemini]" pyinstaller
+
+      - name: Build single-file binary
+        run: |
+          pyinstaller \
+            --onefile \
+            --name ${{ matrix.artifact }} \
+            --hidden-import brewpress \
+            src/brewpress/cli.py
+        shell: bash
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}*
+
+  github-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-sdist, build-binary]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dist
-          path: dist/
+          path: release/
+          merge-multiple: true
 
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release/**/*
           generate_release_notes: true

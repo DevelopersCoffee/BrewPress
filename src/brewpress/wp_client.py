@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,26 @@ class PublishError(Exception):
 
 
 # ------------------------------------------------------------------ #
+# Media types                                                          #
+# ------------------------------------------------------------------ #
+
+
+@dataclass(frozen=True)
+class UploadedMedia:
+    """Returned by upload_image_file() after a successful WP media upload.
+
+    Attributes:
+        id:       WP media object ID — used as ``featured_media`` or in gallery.
+        url:      Public source URL (``source_url`` from the WP REST response).
+        filename: Original filename for display / alt-text fallback.
+    """
+
+    id: int
+    url: str
+    filename: str
+
+
+# ------------------------------------------------------------------ #
 # Markdown → HTML                                                      #
 # ------------------------------------------------------------------ #
 
@@ -78,6 +99,21 @@ _MD_EXTENSIONS = ["fenced_code", "tables", "nl2br"]
 def _md_to_html(text: str) -> str:
     """Convert Markdown body text to HTML for the WP REST API content field."""
     return markdown.markdown(text, extensions=_MD_EXTENSIONS)
+
+
+def _build_gallery_html(media: list[UploadedMedia]) -> str:
+    """Build an HTML gallery section appended to post content.
+
+    Uses plain <figure> tags — no Gutenberg blocks, no plugins required.
+    """
+    if not media:
+        return ""
+    items = "\n".join(
+        f'  <figure class="wp-block-image">'
+        f'<img src="{m.url}" alt="{m.filename}" loading="lazy" /></figure>'
+        for m in media
+    )
+    return f'\n\n<section class="brewpress-gallery">\n{items}\n</section>'
 
 
 # ------------------------------------------------------------------ #
@@ -203,14 +239,14 @@ class WordPressClient:
     # Media upload                                                       #
     # ---------------------------------------------------------------- #
 
-    def upload_image_file(self, path: Path) -> int:
+    def upload_image_file(self, path: Path) -> UploadedMedia:
         """Upload a local image to the WP media library.
 
         Args:
             path: Local file path to the image.
 
         Returns:
-            WP media object ID (integer) for use as ``featured_media``.
+            UploadedMedia with the WP media object ID, public URL, and filename.
 
         Raises:
             PublishError: On any network or HTTP error during upload.
@@ -234,10 +270,15 @@ class WordPressClient:
                 timeout=_TIMEOUT,
             )
             resp.raise_for_status()
-            return int(resp.json()["id"])
+            data = resp.json()
+            return UploadedMedia(
+                id=int(data["id"]),
+                url=str(data.get("source_url") or data.get("guid", {}).get("rendered", "")),
+                filename=path.name,
+            )
         except requests.RequestException as exc:
             raise PublishError(
-                f"Failed to upload featured image {path.name}: {exc}"
+                f"Failed to upload image {path.name}: {exc}"
             ) from exc
 
     # ---------------------------------------------------------------- #
@@ -327,24 +368,36 @@ class WordPressClient:
     # Payload construction                                              #
     # ---------------------------------------------------------------- #
 
+    def _build_gallery_html(self, media: list[UploadedMedia]) -> str:
+        """Build an HTML gallery section from a list of UploadedMedia."""
+        return _build_gallery_html(media)
+
     def _build_payload(
         self,
         job: BlogJob,
         status: str,
         featured_media_id: int | None = None,
+        gallery_media: list[UploadedMedia] | None = None,
     ) -> dict[str, Any]:
         """Build the WP REST API post payload from a BlogJob.
 
         Uses plugin-independent fields only:
         title, content (HTML), excerpt, slug, status, tags, categories,
-        and optionally featured_media.
+        featured_media, and optionally a gallery section appended to content.
         """
         tag_ids = self._resolve_terms(job.tags, "tags") if job.tags else []
         cat_ids = self._resolve_terms(job.categories, "categories") if job.categories else []
 
+        html_body = _md_to_html(job.draft_body_md)
+
+        # Append gallery section when extra media was attached.
+        if gallery_media:
+            gallery_html = _build_gallery_html(gallery_media)
+            html_body = html_body + gallery_html
+
         payload: dict[str, Any] = {
             "title": job.title,
-            "content": _md_to_html(job.draft_body_md),
+            "content": html_body,
             "excerpt": job.excerpt or job.meta_description,
             "slug": job.slug,
             "status": status,
@@ -363,6 +416,7 @@ class WordPressClient:
         self,
         job: BlogJob,
         featured_media_id: int | None = None,
+        gallery_media: list[UploadedMedia] | None = None,
     ) -> BlogJob:
         """Create or update a WP post from a BlogJob.
 
@@ -387,7 +441,11 @@ class WordPressClient:
 
         try:
             existing_id = self.find_post(job)
-            payload = self._build_payload(job, status, featured_media_id=featured_media_id)
+            payload = self._build_payload(
+                job, status,
+                featured_media_id=featured_media_id,
+                gallery_media=gallery_media or [],
+            )
 
             if existing_id is not None:
                 result = self._put(f"posts/{existing_id}", payload)

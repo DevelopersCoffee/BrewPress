@@ -1,189 +1,178 @@
 # BrewPress
 
-BrewPress is an ADK-powered technical publishing engine for DevelopersCoffee.
+AI-powered blog generation and WordPress publishing for technical writers.
 
-It turns topics, notes, git diffs, and PRs into structured technical blog posts with:
+BrewPress turns topics, notes, git diffs, and GitHub PRs into structured technical blog posts, then publishes them to any WordPress site via the REST API.
 
-- code-aware draft generation
-- proof-oriented screenshots for code posts
-- SEO metadata and internal linking
-- deterministic review commands
-- safe WordPress draft-first publishing
+---
 
-## Why BrewPress
+## What it does
 
-Writing technical blogs is usually a fragmented workflow:
+- **Generates drafts** from a topic, notes, or a local git diff using Gemini Flash
+- **Captures proof screenshots** of terminal output for code-heavy posts
+- **Extracts SEO metadata** — title, slug, meta description, keywords, tags
+- **Runs a deterministic review loop** — no accidental publishes
+- **Publishes to WordPress as a draft first** — live only when you say `--live`
+- **Adapts to your site's voice** via a tone fingerprint (`brewpress calibrate`)
 
-1. summarize the work
-2. extract the useful code
-3. explain the implementation
-4. create screenshots
-5. optimize for SEO
-6. upload to WordPress
+---
 
-BrewPress automates that pipeline while keeping editorial control with a strict review and approval flow.
-
-## MVP Scope
-
-Inputs:
-
-- topic plus notes
-- local git diff
-- GitHub PR URL
-
-Outputs:
-
-- structured technical draft
-- SEO title, excerpt, slug, and keywords
-- proof screenshots for code posts
-- WordPress draft by default
-
-## Core Workflow
-
-```text
-Input
- -> Content Agent
- -> Code Agent
- -> Execution Layer
- -> Media Agent
- -> SEO Agent
- -> Internal Linking
- -> Review System
- -> WordPress Agent
-```
-
-## Review Commands
-
-```text
-revise <instruction>
-approve_content
-approve_publish
-approve_publish publish=true
-reject
-```
-
-Publishing rules:
-
-- `approve_publish` creates or updates a WordPress draft
-- `approve_publish publish=true` publishes live
-
-## Project Status
-
-This repository currently contains the locked product spec, delivery plan, and Claude implementation handoff for `v1.0.0`.
-
-Implementation is intentionally guided by:
-
-- a deterministic PRD
-- a stacked delivery plan
-- project-level shared skills for Claude, Codex, Copilot, and Augment
-
-## Repo Structure
-
-```text
-docs/
-  final-prd.md
-  claude-handoff.md
-  gstack-delivery-plan.md
-  auto-blog-system-plan.md
-.agents/skills/
-  context-hub/
-  find-skills/
-  wp-rest-api/
-```
-
-## Skills
-
-This repo uses a single shared skills source at `.agents/skills`, symlinked into:
-
-- `.claude/skills`
-- `.augment/skills`
-- `.codex/skills`
-- `.github/skills`
-
-Shared skills currently include:
-
-- `context-hub` for curated, up-to-date API and SDK docs via `chub`
-- `find-skills` for discovering installable agent skills
-- `wp-rest-api` for WordPress REST API implementation and debugging
-
-## Getting Started
-
-### 1. Clone and install
+## Install
 
 ```bash
-git clone git@github.com:DevelopersCoffee/BrewPress.git
-cd BrewPress
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+pip install brewpress
 ```
 
-### 2. Configure credentials
+Or install from source:
+
+```bash
+git clone https://github.com/your-org/brewpress.git
+cd brewpress
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[gemini]"
+```
+
+---
+
+## Quickstart
+
+### 1. Set environment variables
 
 ```bash
 cp .env.example .env
+# Edit .env and fill in your credentials
 ```
 
-Edit `.env` and fill in real values:
+| Variable | Required | Description |
+|---|---|---|
+| `WP_URL` | Yes | Your WordPress URL (must be `https://`) |
+| `WP_USERNAME` | Yes | WordPress username |
+| `WP_APP_PASSWORD` | Yes | [Application Password](https://wordpress.org/documentation/article/application-passwords/) from WP Admin |
+| `GOOGLE_API_KEY` | Yes (draft) | [Google AI Studio](https://aistudio.google.com/app/apikey) key |
+| `BREWPRESS_SITE_NAME` | No | Human name of your site, used in AI prompts (default: `my technical blog`) |
+| `BREWPRESS_SITE_FOCUS` | No | Topic focus for draft generation (default: `backend development`) |
 
-| Variable | Description |
-|---|---|
-| `WP_URL` | Your WordPress site URL (`https://` required) |
-| `WP_USERNAME` | WordPress username for the Application Password |
-| `WP_APP_PASSWORD` | Generated via **WP Admin → Users → Profile → Application Passwords** |
-| `GOOGLE_API_KEY` | Google AI API key for draft generation |
-
-> **Never commit `.env`.** It is git-ignored by default.
-
-### 3. Sanity check
-
-Verify the WordPress connection and list your 5 most recent posts:
+### 2. Check your setup
 
 ```bash
-source .venv/bin/activate
-export $(grep -v '^#' .env | xargs)
-brewpress --version
+brewpress doctor
 ```
 
-A successful connection will authenticate via WordPress Application Password over HTTPS.
+This verifies Python version, env vars, WordPress connectivity, and the Gemini package.
 
-### 4. Generate your first draft
+### 3. Generate a draft
 
 ```bash
-brewpress draft --topic "your topic here"
+# From a topic
+brewpress draft --topic "Java 21 virtual threads in practice"
+
+# From a git diff
+brewpress draft --diff path/to/changes.diff --topic "what changed"
+
+# From notes
+brewpress draft --topic "Spring Boot caching" --notes "We replaced Caffeine with Redis"
 ```
 
-### 5. Review and publish
+### 4. Review and approve
 
 ```bash
-brewpress review
-brewpress approve-content
-brewpress approve-publish          # saves as WordPress draft
+brewpress review                   # display current draft
+brewpress approve-content          # step 1 of 2
+brewpress approve-publish          # step 2: saves as WordPress draft
 brewpress approve-publish --live   # publishes live
 ```
 
-### GitHub Actions / CI
+### 5. Revise or reject
 
-Secrets are stored in the repository under **Settings → Secrets → Actions**:
+```bash
+brewpress revise "shorten the introduction and add a TL;DR"
+brewpress reject --reason "off topic"
+```
 
-- `WP_URL`
-- `WP_USERNAME`
-- `WP_APP_PASSWORD`
+### 6. Calibrate your tone (optional but recommended)
 
-Reference them in workflows as `${{ secrets.WP_URL }}` etc.
+```bash
+brewpress calibrate
+```
 
-### Implementation docs
+Fetches your 20 most recent posts and writes a tone fingerprint to `~/.brewpress/tone.json`. Future drafts automatically use this fingerprint.
 
-1. `docs/final-prd.md`
-2. `docs/gstack-delivery-plan.md`
-3. `docs/claude-handoff.md`
+### 7. Surface topic ideas
 
-## Roadmap
+```bash
+brewpress suggest --topic "spring boot" "ai agents" --count 5
+```
 
-- `v1.0.0`: local-first MVP with draft-safe WordPress publishing
-- `v1.1.0`: richer code grounding and internal linking
-- `v1.2.0`: proof media upgrades and more resilient execution
-- `v2.0.0`: hosted queueing, async workers, and multi-run orchestration
+---
+
+## All commands
+
+| Command | Description |
+|---|---|
+| `brewpress doctor` | Check environment and connectivity |
+| `brewpress draft` | Generate a new blog post draft |
+| `brewpress review` | Display the current draft |
+| `brewpress approve-content` | Approve content (step 1 of 2) |
+| `brewpress approve-publish` | Send to WordPress (step 2 of 2) |
+| `brewpress revise <instruction>` | Revise and reset approvals |
+| `brewpress reject` | Discard the current draft |
+| `brewpress calibrate` | Build tone fingerprint from your site |
+| `brewpress suggest` | Suggest topics using trend signals |
+
+---
+
+## Review flow
+
+```
+draft  →  [review]  →  approve-content  →  approve-publish
+                ↑                               |
+              revise  ←──────────────────────────
+```
+
+- `approve-publish` always creates a **WordPress draft** by default.
+- Add `--live` to publish immediately.
+- Rejecting from `APPROVED_STEP_2` requires `--force`.
+
+---
+
+## Site customization
+
+BrewPress is site-agnostic. Set two optional env vars to ground drafts in your site's identity:
+
+```bash
+BREWPRESS_SITE_NAME="Acme Engineering Blog"
+BREWPRESS_SITE_FOCUS="distributed systems and platform engineering"
+```
+
+Run `brewpress calibrate` to layer in your actual writing style on top.
+
+---
+
+## WordPress setup
+
+1. Log in to WordPress Admin.
+2. Go to **Users → Profile → Application Passwords**.
+3. Create a new Application Password named `brewpress`.
+4. Copy the generated password (spaces included) into `WP_APP_PASSWORD`.
+
+BrewPress uses the WordPress REST API (`/wp-json/wp/v2/`) — no plugins required.
+
+> HTTPS is enforced. Credentials are never sent over plain HTTP.
+
+---
+
+## CI / GitHub Actions
+
+The included workflows run on every push and PR:
+
+- **CI** (`.github/workflows/ci.yml`): lint + test matrix across Python 3.11, 3.12, 3.13
+- **Release** (`.github/workflows/release.yml`): builds sdist, wheel, and native binaries for Linux, macOS, Windows on every `v*.*.*` tag
+
+To add WordPress credentials to CI, store them as repository secrets under **Settings → Secrets → Actions**:
+
+- `WP_URL`, `WP_USERNAME`, `WP_APP_PASSWORD`, `GOOGLE_API_KEY`
+
+---
 
 ## License
 

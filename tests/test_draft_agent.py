@@ -10,7 +10,7 @@ import pytest
 
 from brewpress.draft_agent import (
     _SECONDARY_KEYWORD_COUNT,
-    _STYLE_GUIDE,
+    _WRITING_RULES,
     DraftSchema,
     build_prompt,
     draft_to_job,
@@ -49,6 +49,8 @@ def _valid_draft_dict(**overrides: object) -> dict:
         "categories": ["Java", "Backend"],
         "quality_score": 85,
         "quality_gaps": ["missing benchmark numbers"],
+        "hook": "Virtual threads arrived in Java 21. This post shows you exactly how to use them.",
+        "cta": "Try adding virtual thread support to your Spring Boot service this week.",
     }
     base.update(overrides)
     return base
@@ -371,6 +373,9 @@ def test_generate_returns_blog_job() -> None:
     agent._client = mock_client
     agent._model = "gemini-2.0-flash"
     agent._types = MagicMock()
+    agent._site_name = "my technical blog"
+    agent._site_focus = "backend development"
+    agent._tone_fingerprint = None
 
     ctx = _ctx()
     job = agent.generate(ctx)
@@ -387,6 +392,9 @@ def test_generate_calls_model_with_prompt() -> None:
     agent._client = mock_client
     agent._model = "gemini-2.0-flash"
     agent._types = MagicMock()
+    agent._site_name = "my technical blog"
+    agent._site_focus = "backend development"
+    agent._tone_fingerprint = None
 
     ctx = _ctx(topic="Spring Boot 3 caching")
     agent.generate(ctx)
@@ -408,6 +416,9 @@ def test_generate_force_bypasses_single_topic_guard() -> None:
     agent._client = mock_client
     agent._model = "gemini-2.0-flash"
     agent._types = MagicMock()
+    agent._site_name = "my technical blog"
+    agent._site_focus = "backend development"
+    agent._tone_fingerprint = None
 
     ctx = _ctx()
     job = agent.generate(ctx, force=True)
@@ -424,6 +435,9 @@ def test_generate_raises_without_force_on_multi_topic() -> None:
     agent._client = mock_client
     agent._model = "gemini-2.0-flash"
     agent._types = MagicMock()
+    agent._site_name = "my technical blog"
+    agent._site_focus = "backend development"
+    agent._tone_fingerprint = None
 
     ctx = _ctx()
     with pytest.raises(ValueError, match="multiple topics"):
@@ -441,6 +455,9 @@ def test_generate_propagates_parse_error() -> None:
     agent._client = mock_client
     agent._model = "gemini-2.0-flash"
     agent._types = MagicMock()
+    agent._site_name = "my technical blog"
+    agent._site_focus = "backend development"
+    agent._tone_fingerprint = None
 
     with pytest.raises(ValueError, match="invalid JSON"):
         agent.generate(_ctx())
@@ -452,12 +469,12 @@ def test_generate_propagates_parse_error() -> None:
 
 
 def test_style_guide_mentions_short_paragraphs() -> None:
-    assert "paragraph" in _STYLE_GUIDE.lower()
+    assert "paragraph" in _WRITING_RULES.lower()
 
 
 def test_style_guide_mentions_no_fluff() -> None:
-    assert "fluff" in _STYLE_GUIDE.lower()
+    assert "fluff" in _WRITING_RULES.lower()
 
 
 def test_style_guide_mentions_no_invented_facts() -> None:
-    assert "invented" in _STYLE_GUIDE.lower() or "invent" in _STYLE_GUIDE.lower()
+    assert "invented" in _WRITING_RULES.lower() or "invent" in _WRITING_RULES.lower()

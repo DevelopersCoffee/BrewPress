@@ -1,7 +1,7 @@
 """Tests for tools/posts.py."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 import requests
@@ -10,7 +10,6 @@ from brewpress.wordpress.tools.posts import (
     create_post,
     delete_post,
     find_by_slug,
-    get_post,
     list_posts,
     update_post,
 )
@@ -139,7 +138,9 @@ class TestUpdatePost:
         client = make_client(put_return={"id": 5, "status": "publish"})
         result = update_post(client, 5, status="publish", title="New Title")
         assert result == {"id": 5, "status": "publish"}
-        client.put.assert_called_once_with("posts/5", json={"status": "publish", "title": "New Title"})
+        client.put.assert_called_once_with(
+            "posts/5", json={"status": "publish", "title": "New Title"}
+        )
 
 
 class TestDeletePost:

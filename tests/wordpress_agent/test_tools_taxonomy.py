@@ -50,7 +50,7 @@ class TestGetOrCreateCategory:
         client = make_client()
         client.get.return_value = []
         client.post.return_value = {"id": 10, "name": "Sub", "parent": 3}
-        result = get_or_create_category(client, "Sub", parent=3)
+        get_or_create_category(client, "Sub", parent=3)
         payload = client.post.call_args[1]["json"]
         assert payload["parent"] == 3
 

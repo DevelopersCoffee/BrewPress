@@ -9,6 +9,12 @@ python-dotenv is used to load it automatically — values with spaces (e.g.
 WordPress Application Passwords) must be quoted in .env:
 
     WP_APP_PASSWORD="xxxx xxxx xxxx xxxx xxxx xxxx"
+
+Optional customization variables (never required):
+    BREWPRESS_SITE_NAME   Human name of your site — used in AI prompts
+                          (default: "my technical blog")
+    BREWPRESS_SITE_FOCUS  Topic focus for draft generation
+                          (default: "backend development")
 """
 
 from __future__ import annotations
@@ -43,6 +49,9 @@ class BrewPressConfig:
     wp_username: str | None = None
     wp_app_password: str | None = None
     google_api_key: str | None = None
+    # Optional identity — used in AI prompts, not for authentication
+    site_name: str = "my technical blog"
+    site_focus: str = "backend development"
 
 
 def load_config(
@@ -88,4 +97,6 @@ def load_config(
         wp_username=os.environ.get("WP_USERNAME", "").strip() or None,
         wp_app_password=os.environ.get("WP_APP_PASSWORD", "").strip() or None,
         google_api_key=os.environ.get("GOOGLE_API_KEY", "").strip() or None,
+        site_name=os.environ.get("BREWPRESS_SITE_NAME", "").strip() or "my technical blog",
+        site_focus=os.environ.get("BREWPRESS_SITE_FOCUS", "").strip() or "backend development",
     )

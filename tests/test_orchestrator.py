@@ -8,13 +8,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from brewpress.execution_layer import CommandResult, ExecutionTrace
-from brewpress.media_agent import MediaManifest, MediaType
+from brewpress.media_agent import MediaManifest
 from brewpress.models import BlogJob, JobState
 from brewpress.orchestrator import DraftResult, Orchestrator
 from brewpress.state_store import StateStore
-from brewpress.work_ingestion import WorkContext
 from brewpress.wp_client import AmbiguousMatchError, PublishError
-
 
 # ------------------------------------------------------------------ #
 # Helpers                                                              #
@@ -382,7 +380,7 @@ def test_publish_calls_wp_client_with_job(tmp_path: Path) -> None:
     orc = Orchestrator(store=store, wp_client=wp)
     orc.publish()
 
-    wp.publish.assert_called_once_with(approved, featured_media_id=None)
+    wp.publish.assert_called_once_with(approved, featured_media_id=None, gallery_media=None)
 
 
 def test_publish_builds_client_from_config_when_not_injected(tmp_path: Path) -> None:

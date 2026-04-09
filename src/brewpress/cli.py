@@ -55,6 +55,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip the interactive [y/N] content approval prompt.",
     )
+    draft.add_argument(
+        "--auto-critic",
+        action="store_true",
+        help="Run the Critic Agent after generation and show the review inline.",
+    )
 
     # suggest — surface topic and keyword ideas from trend signals
     suggest = sub.add_parser(
@@ -81,6 +86,80 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum number of suggestions to return (default: 5).",
     )
 
+    # boost — Blog Boost Assistant: SEO audit, rewrite, feedback, topics, etc.
+    boost = sub.add_parser(
+        "boost",
+        help="Run the Blog Boost Assistant (SEO audit, rewrite, feedback, topics, …).",
+    )
+    boost.add_argument(
+        "task",
+        metavar="TASK",
+        choices=[
+            "seo_audit",
+            "rewrite",
+            "title_suggestions",
+            "meta_description",
+            "content_feedback",
+            "topic_ideas",
+            "internal_linking",
+            "engagement_message",
+        ],
+        help=(
+            "Task to perform: seo_audit | rewrite | title_suggestions | "
+            "meta_description | content_feedback | topic_ideas | "
+            "internal_linking | engagement_message"
+        ),
+    )
+    boost.add_argument(
+        "--content",
+        default="",
+        metavar="TEXT_OR_PATH",
+        help="Blog post content (inline text or path to a .md file).",
+    )
+    boost.add_argument(
+        "--keywords",
+        nargs="+",
+        default=[],
+        metavar="KW",
+        help="Target keywords (e.g. --keywords 'spring boot' 'caching').",
+    )
+    boost.add_argument(
+        "--audience",
+        default="mid-to-senior backend developers",
+        metavar="DESC",
+        help="Target audience description.",
+    )
+    boost.add_argument(
+        "--tone",
+        default="professional, friendly, developer-focused",
+        metavar="DESC",
+        help="Desired writing tone.",
+    )
+    boost.add_argument(
+        "--word-count",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Target word count for rewrite tasks.",
+    )
+    boost.add_argument(
+        "--format",
+        choices=["blog", "email", "social"],
+        default="blog",
+        help="Output format for engagement_message tasks (default: blog).",
+    )
+    boost.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Emit the full BoostResult as JSON instead of human-readable output.",
+    )
+    boost.add_argument(
+        "--from-draft",
+        action="store_true",
+        help="Load content from the current saved draft (~/.brewpress/last_draft.json).",
+    )
+
     # calibrate — fetch recent posts and build a tone fingerprint
     calibrate = sub.add_parser(
         "calibrate",
@@ -91,6 +170,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Re-calibrate even if tone.json already exists.",
     )
+
+    # critic — LLM-based post review (Generator + Critic loop)
+    critic_p = sub.add_parser(
+        "critic",
+        help="Run the Critic Agent to review the current draft and get a pass/revise verdict.",
+    )
+    critic_p.add_argument(
+        "--apply",
+        action="store_true",
+        help="Apply the revision instruction automatically when verdict is 'revise'.",
+    )
+    critic_p.add_argument(
+        "--eval",
+        action="store_true",
+        dest="run_eval",
+        help="Also run deterministic quality checks (no API).",
+    )
+
+    # doctor — environment and connectivity check
+    sub.add_parser("doctor", help="Check environment, credentials, and connectivity.")
 
     # review — display the current draft
     sub.add_parser("review", help="Display the current draft for review.")
@@ -107,6 +206,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--live",
         action="store_true",
         help="Publish live instead of saving as draft. Never inferred implicitly.",
+    )
+    approve_publish.add_argument(
+        "--attach",
+        metavar="FILE",
+        nargs="+",
+        dest="attach_files",
+        help="Attach local image/media files to the post (uploaded to WP media library).",
     )
 
     # revise — apply a revision instruction (resets approvals per PRD rules)
@@ -177,6 +283,13 @@ def main() -> int:
         if result.media_gaps:
             for gap in result.media_gaps:
                 print(f"[brewpress] warning: {gap}", file=sys.stderr)
+
+        if getattr(args, "auto_critic", False):
+            print()
+            rc = _run_critic_on_job(result.job, config, apply=False, run_eval=False)
+            if rc != 0:
+                return rc
+
         return 0
 
     # ---------------------------------------------------------------- #
@@ -238,8 +351,16 @@ def main() -> int:
         except (FileNotFoundError, ValueError) as exc:
             print(f"[brewpress] {exc}", file=sys.stderr)
             return 1
+        from pathlib import Path as _Path
+        extra_media = [_Path(f) for f in (args.attach_files or [])]
+        missing_files = [str(p) for p in extra_media if not p.is_file()]
+        if missing_files:
+            for f in missing_files:
+                print(f"[brewpress] --attach: file not found: {f}", file=sys.stderr)
+            return 1
+
         try:
-            updated_job = Orchestrator().publish(config=config)
+            updated_job = Orchestrator().publish(config=config, extra_media_paths=extra_media)
         except AmbiguousMatchError as exc:
             print(f"[brewpress] Ambiguous WP post match: {exc}", file=sys.stderr)
             return 1
@@ -358,8 +479,265 @@ def main() -> int:
             print()
         return 0
 
+    if args.command == "doctor":
+        return _run_doctor()
+
+    if args.command == "critic":
+        from brewpress.config import load_config
+        from brewpress.review_gate import ReviewGate
+        try:
+            config = load_config(required=("GOOGLE_API_KEY",))
+            job = ReviewGate().review()
+        except (OSError, FileNotFoundError) as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+        return _run_critic_on_job(
+            job, config,
+            apply=args.apply,
+            run_eval=args.run_eval,
+        )
+
+    if args.command == "boost":
+        return _run_boost(args)
+
     print(f"[brewpress] '{args.command}' is not yet implemented.")
     return 0
+
+
+def _run_critic_on_job(
+    job: object,
+    config: object,
+    apply: bool,
+    run_eval: bool,
+) -> int:
+    """Run the CriticAgent on a BlogJob and display results.
+
+    Args:
+        job:      BlogJob to review.
+        config:   BrewPressConfig with GOOGLE_API_KEY.
+        apply:    When True and verdict is "revise", call ReviewGate.revise().
+        run_eval: When True, also run deterministic boost_eval checks.
+    """
+    from brewpress.critic_agent import CriticAgent
+
+    try:
+        critic = CriticAgent(config)  # type: ignore[arg-type]
+        result = critic.review(job)  # type: ignore[arg-type]
+    except (ValueError, RuntimeError) as exc:
+        print(f"[brewpress] Critic failed: {exc}", file=sys.stderr)
+        return 1
+
+    print("── Critic Review ───────────────────────────────────────────")
+    print(f"  Verdict:  {result.verdict.upper()}")
+    print(
+        f"  Scores:   SEO={result.scores.seo_quality}  "
+        f"Clarity={result.scores.clarity}  "
+        f"TechAccuracy={result.scores.technical_accuracy}  "
+        f"PublishReady={result.scores.publish_readiness}"
+    )
+    if result.failures:
+        print("  Issues:")
+        for issue in result.failures:
+            print(f"    • {issue}")
+    if result.revision_instruction:
+        print(f"  Fix:      {result.revision_instruction}")
+    print()
+
+    if run_eval:
+        from brewpress.boost_eval import run_checks
+        eval_result = run_checks(job)  # type: ignore[arg-type]
+        print("── Deterministic Checks ────────────────────────────────────")
+        print(eval_result)
+        print()
+
+    if not result.is_pass() and apply:
+        from brewpress.review_gate import ReviewGate
+        try:
+            ReviewGate().revise(result.revision_instruction)
+            print(
+                "[brewpress] Revision instruction applied. "
+                "Run 'brewpress draft' (with same args) to regenerate."
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"[brewpress] Could not apply revision: {exc}", file=sys.stderr)
+            return 1
+
+    return 0
+
+
+def _run_boost(args: argparse.Namespace) -> int:  # noqa: PLR0912
+    """Run the Blog Boost Assistant for the requested task."""
+    import json as _json
+    import os
+
+    from brewpress.blog_boost import BlogBoostAgent, BoostRequest
+    from brewpress.config import load_config
+
+    # Resolve content: --from-draft, --content PATH, or inline --content TEXT
+    content = args.content or ""
+    if args.from_draft:
+        from brewpress.state_store import StateStore
+        try:
+            job = StateStore().load()
+            content = job.draft_body_md or ""
+        except FileNotFoundError as exc:
+            print(f"[brewpress] {exc}", file=sys.stderr)
+            return 1
+    elif content and os.path.isfile(content):
+        try:
+            from pathlib import Path
+            content = Path(content).read_text(encoding="utf-8")
+        except OSError as exc:
+            print(f"[brewpress] Cannot read file: {exc}", file=sys.stderr)
+            return 1
+
+    # Load config (only needs GOOGLE_API_KEY)
+    try:
+        config = load_config(required=("GOOGLE_API_KEY",))
+    except OSError as exc:
+        print(f"[brewpress] {exc}", file=sys.stderr)
+        return 1
+
+    request = BoostRequest(
+        task_type=args.task,
+        content=content,
+        keywords=args.keywords,
+        target_audience=args.audience,
+        tone=args.tone,
+        word_count=args.word_count,
+        format=args.format,
+    )
+
+    try:
+        agent = BlogBoostAgent(config)
+        result = agent.run(request)
+    except (ValueError, RuntimeError) as exc:
+        print(f"[brewpress] Boost failed: {exc}", file=sys.stderr)
+        return 1
+
+    if args.output_json:
+        print(_json.dumps(result.to_json(), indent=2, ensure_ascii=False))
+        return 0
+
+    # Human-readable output
+    if result.optimized_content:
+        print(result.optimized_content)
+        print()
+
+    seo = result.seo_suggestions
+    if any([seo.keywords_used, seo.missing_keywords, seo.title_feedback,
+            seo.meta_description, seo.readability_score]):
+        print("── SEO ─────────────────────────────────────────────────────")
+        if seo.title_feedback:
+            print(f"Title:       {seo.title_feedback}")
+        if seo.meta_description:
+            print(f"Meta:        {seo.meta_description}")
+        if seo.readability_score:
+            print(f"Readability: {seo.readability_score}")
+        if seo.keywords_used:
+            print(f"Keywords ✓:  {', '.join(seo.keywords_used)}")
+        if seo.missing_keywords:
+            print(f"Keywords ✗:  {', '.join(seo.missing_keywords)}")
+        print()
+
+    if result.structure_improvements:
+        print("── Structure ───────────────────────────────────────────────")
+        for item in result.structure_improvements:
+            print(f"  • {item}")
+        print()
+
+    if result.engagement_tips:
+        print("── Engagement ──────────────────────────────────────────────")
+        for tip in result.engagement_tips:
+            print(f"  • {tip}")
+        print()
+
+    return 0
+
+
+def _run_doctor() -> int:
+    """Check environment, credentials, and connectivity. Returns 0 if all checks pass."""
+    import os
+    import sys as _sys
+
+    ok = True
+
+    def check(label: str, passed: bool, detail: str = "") -> None:
+        nonlocal ok
+        icon = "OK" if passed else "FAIL"
+        msg = f"  [{icon}] {label}"
+        if detail:
+            msg += f" — {detail}"
+        print(msg)
+        if not passed:
+            ok = False
+
+    print("BrewPress doctor\n")
+
+    # Python version
+    major, minor = _sys.version_info[:2]
+    check(f"Python {major}.{minor}", major == 3 and minor >= 11,
+          "requires Python 3.11+" if not (major == 3 and minor >= 11) else "")
+
+    # Env vars
+    env_vars = {
+        "WP_URL": os.environ.get("WP_URL", "").strip(),
+        "WP_USERNAME": os.environ.get("WP_USERNAME", "").strip(),
+        "WP_APP_PASSWORD": os.environ.get("WP_APP_PASSWORD", "").strip(),
+        "GOOGLE_API_KEY": os.environ.get("GOOGLE_API_KEY", "").strip(),
+    }
+    for name, value in env_vars.items():
+        check(f"env {name}", bool(value), "not set" if not value else "")
+
+    # HTTPS enforcement
+    wp_url = env_vars["WP_URL"]
+    if wp_url:
+        check("WP_URL uses HTTPS", wp_url.startswith("https://"),
+              "must start with https://" if not wp_url.startswith("https://") else "")
+
+    # WordPress connectivity
+    if env_vars["WP_URL"] and env_vars["WP_USERNAME"] and env_vars["WP_APP_PASSWORD"]:
+        from brewpress.config import BrewPressConfig
+        from brewpress.wp_client import WordPressClient
+        try:
+            cfg = BrewPressConfig(
+                wp_url=wp_url.rstrip("/"),
+                wp_username=env_vars["WP_USERNAME"],
+                wp_app_password=env_vars["WP_APP_PASSWORD"],
+            )
+            client = WordPressClient(cfg)
+            posts = client._get("posts", per_page=1, _fields="id")
+            check("WordPress connectivity", True, f"reachable ({len(posts)} post sampled)")
+        except Exception as exc:
+            check("WordPress connectivity", False, str(exc)[:120])
+    else:
+        print("  [SKIP] WordPress connectivity — credentials incomplete")
+
+    # Gemini availability (basic import check)
+    if env_vars["GOOGLE_API_KEY"]:
+        try:
+            from google import genai as _genai  # noqa: F401
+            check("google-genai package", True)
+        except ImportError:
+            check("google-genai package", False, "run: pip install google-genai")
+    else:
+        print("  [SKIP] google-genai check — GOOGLE_API_KEY not set")
+
+    # Tone fingerprint
+    from pathlib import Path as _Path
+    tone_path = _Path.home() / ".brewpress" / "tone.json"
+    if tone_path.exists():
+        print(f"  [OK]   tone fingerprint — {tone_path}")
+    else:
+        print(f"  [INFO] tone fingerprint not found at {tone_path} (run brewpress calibrate)")
+
+    print()
+    if ok:
+        print("All checks passed.")
+        return 0
+    else:
+        print("Some checks failed. Fix the issues above and re-run brewpress doctor.")
+        return 1
 
 
 if __name__ == "__main__":
