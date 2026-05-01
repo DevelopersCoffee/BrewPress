@@ -1,6 +1,6 @@
 import pytest
-from src.brewpress.models import BlogJob
-from src.brewpress.models.engagement_models import (
+from brewpress.models import BlogJob
+from brewpress.models.engagement_models import (
     PublishDecision, VersioningInfo, EngagementScoreData
 )
 
