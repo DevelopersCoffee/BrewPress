@@ -32,3 +32,4 @@ tmp/
 # Playwright / browser caches
 playwright-report/
 test-results/
+.worktrees/
