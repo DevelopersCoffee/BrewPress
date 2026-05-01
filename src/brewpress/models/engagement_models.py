@@ -56,7 +56,7 @@ class EngagementScoreData(BaseModel):
 
     structural_score: int = Field(default=0, ge=0, le=100)
     technical_score: int = Field(default=0, ge=0, le=100)
-    readability_score: Optional[int] = None
+    readability_score: Optional[int] = Field(default=None, ge=0, le=100)
     final_score: int = Field(default=0, ge=0, le=100)
     fixer_iterations_applied: int = 0
     fixer_actions: List[str] = Field(default_factory=list)
