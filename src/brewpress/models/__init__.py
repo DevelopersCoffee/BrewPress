@@ -30,7 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .engagement_models import (
     EngagementScoreData, VersioningInfo, ExecutionData,
-    LearningData, PublishingData, PostPublishMetrics, OverrideData
+    LearningData, PublishingData, PostPublishMetrics, OverrideData,
+    HookStyle, CTAType, CodeComplexity
 )
 
 
