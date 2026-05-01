@@ -28,6 +28,11 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .engagement_models import (
+    EngagementScoreData, VersioningInfo, ExecutionData,
+    LearningData, PublishingData, PostPublishMetrics, OverrideData
+)
+
 
 class JobState(StrEnum):
     DRAFT = "draft"
@@ -95,6 +100,15 @@ class BlogJob(BaseModel):
 
     # Rejection
     rejected_reason: str = ""
+
+    # New engagement fields
+    versioning: VersioningInfo = Field(default_factory=VersioningInfo)
+    execution: ExecutionData = Field(default_factory=ExecutionData)
+    learning: LearningData = Field(default_factory=LearningData)
+    engagement_data: EngagementScoreData = Field(default_factory=EngagementScoreData)
+    publishing: PublishingData = Field(default_factory=PublishingData)
+    post_publish: PostPublishMetrics = Field(default_factory=PostPublishMetrics)
+    override: OverrideData = Field(default_factory=OverrideData)
 
     # ------------------------------------------------------------------ #
     # State transitions — each returns a new immutable BlogJob instance.  #
