@@ -3,38 +3,37 @@
 Implements the Generator + Critic loop pattern from the ADK spec.
 
 The critic evaluates a BlogJob draft on four dimensions and returns a
-structured verdict. When the verdict is "revise", the caller should feed
-``revision_instruction`` directly into ``ReviewGate.revise()`` so the
-draft pipeline re-runs with targeted guidance.
+structured verdict.  When the verdict is "revise", the Orchestrator feeds
+the revision_instruction back into the next WriterAgent pass.
 
 Pipeline position:
-    BlogJob (DRAFT)  →  CriticAgent.review()  →  CriticResult
-                                    │
-                           verdict == "revise"
-                                    │
-                    ReviewGate.revise(revision_instruction)
-                                    │
-                         BlogJob (DRAFT, revised)  →  DraftAgent
+    SEOAgent  →  CriticAgent.review()  →  CriticResult
+                                │
+                       verdict == "revise"
+                                │
+                 job.model_copy(revise_instruction=...)
+                                │
+                    WriterAgent (next loop iteration)
 
 Scoring:
     Each dimension is scored 1–5 by the model.
     verdict = "pass"   when ALL scores >= PASS_THRESHOLD (default 4)
     verdict = "revise" when ANY score < PASS_THRESHOLD
 
-Revision instruction:
-    A concise, actionable string (≤ 200 chars) summarising all changes
-    needed in one go — suitable for direct use as the revise() argument.
+The verdict rule is enforced deterministically in code — the model's
+self-reported verdict is overridden if it disagrees with the scores.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from brewpress.agent_base import BaseAgent
 from brewpress.config import BrewPressConfig
 from brewpress.models import BlogJob
 
@@ -43,7 +42,6 @@ from brewpress.models import BlogJob
 # ------------------------------------------------------------------ #
 
 PASS_THRESHOLD: int = 4  # minimum score per dimension to pass
-
 
 # ------------------------------------------------------------------ #
 # Result model                                                         #
@@ -78,6 +76,15 @@ class CriticScores(BaseModel):
         return key, fields[key]
 
 
+class _CriticSchema(BaseModel):
+    """Structured output schema for CriticAgent — forces proper JSON escaping."""
+
+    scores: CriticScores
+    verdict: Literal["pass", "revise"]
+    revision_instruction: str
+    failures: list[str]
+
+
 @dataclass(frozen=True)
 class CriticResult:
     """Structured output from a CriticAgent review pass."""
@@ -102,37 +109,6 @@ class CriticResult:
             f"[REVISE] {dim} scored {score}/5 — "
             f"{self.revision_instruction[:120]}"
         )
-
-
-# ------------------------------------------------------------------ #
-# Critic system prompt                                                 #
-# ------------------------------------------------------------------ #
-
-_CRITIC_SYSTEM_PROMPT = """\
-You are a senior technical editor evaluating a blog post draft.
-Your job is to give an honest, specific, actionable review — not flattery.
-
-Scoring dimensions (1–5 each):
-  seo_quality:         keyword placement, title/meta length, heading hierarchy
-  clarity:             readability, paragraph length, active voice, flow
-  technical_accuracy:  code correctness, no invented facts, accurate claims
-  publish_readiness:   hook quality, conclusion, overall polish, CTA present
-
-Score 5: excellent, no changes needed
-Score 4: good, minor polishing only
-Score 3: needs work in this area
-Score 2: significant problems
-Score 1: unacceptable, must rewrite
-
-Rules:
-- verdict = "pass"   when ALL scores >= 4
-- verdict = "revise" when ANY score < 4
-- revision_instruction MUST be specific (cite headings, lines, or sections)
-- revision_instruction must be 1-3 sentences, ≤ 200 characters
-- failures list concrete problems, not generic observations
-
-Do NOT fabricate metrics. Do NOT guarantee rankings.
-"""
 
 
 # ------------------------------------------------------------------ #
@@ -165,19 +141,7 @@ def _build_critic_prompt(job: BlogJob) -> str:
         f"**Primary keyword:** {job.primary_keyword}\n"
         f"**Keywords:** {kw_list}"
         f"{quality_note}\n\n"
-        f"**Body:**\n---\n{body_preview}\n---\n\n"
-        "Return a JSON object:\n"
-        "{\n"
-        '  "scores": {\n'
-        '    "seo_quality": <1-5>,\n'
-        '    "clarity": <1-5>,\n'
-        '    "technical_accuracy": <1-5>,\n'
-        '    "publish_readiness": <1-5>\n'
-        "  },\n"
-        '  "failures": ["<specific issue>", ...],\n'
-        '  "verdict": "pass" | "revise",\n'
-        '  "revision_instruction": "<actionable instruction or empty string>"\n'
-        "}"
+        f"**Body:**\n---\n{body_preview}\n---"
     )
 
 
@@ -185,30 +149,53 @@ def _build_critic_prompt(job: BlogJob) -> str:
 # Response parsing                                                     #
 # ------------------------------------------------------------------ #
 
-_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?", re.MULTILINE)
+
+def _seo_score_to_quality(score: int) -> int:
+    """Map seo.full 0–100 score to CriticScores.seo_quality 1–5."""
+    if score >= 85:
+        return 5
+    if score >= 70:
+        return 4
+    if score >= 55:
+        return 3
+    if score >= 40:
+        return 2
+    return 1
 
 
-def _extract_json(raw: str) -> str:
-    text = raw.strip().lstrip("\ufeff").strip()
-    if text.startswith("{"):
-        return text
-    text = _JSON_FENCE_RE.sub("", text, count=1).strip()
-    if text.startswith("{"):
-        return text.rstrip("`").rstrip()
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return text[start : end + 1]
-    return text
+def _compute_publish_readiness(job: BlogJob) -> int:
+    """Compute publish readiness (1–5) from content signals in draft_body_md."""
+    body = job.draft_body_md
+    words = len(body.split())
+    headings = sum(1 for line in body.splitlines() if line.startswith("#"))
+    code_blocks = body.count("```") // 2
+    has_cta = bool(job.cta) or any(
+        phrase in body.lower()
+        for phrase in (
+            "follow", "subscribe", "check out", "learn more",
+            "get started", "try it", "give it a try", "let me know",
+        )
+    )
+
+    if words >= 600 and has_cta and (code_blocks >= 1 or headings >= 3):
+        return 5
+    if words >= 200 and (has_cta or code_blocks >= 1) and headings >= 2:
+        return 4
+    if words >= 200:
+        return 3
+    if words >= 80:
+        return 2
+    return 1
 
 
 def _parse_critic_response(raw: str) -> CriticResult:
     try:
-        data = json.loads(_extract_json(raw))
+        data = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise ValueError(f"Critic returned invalid JSON: {exc}\n\nRaw:\n{raw}") from exc
 
     scores_raw = data.get("scores", {}) or {}
-    # Clamp scores to [1, 5] so a misbehaving model doesn't hard-fail Pydantic.
+
     def _clamp(v: object) -> int:
         try:
             return max(1, min(5, int(v)))  # type: ignore[arg-type]
@@ -225,7 +212,7 @@ def _parse_critic_response(raw: str) -> CriticResult:
     verdict_raw = str(data.get("verdict", "revise")).lower()
     verdict: Literal["pass", "revise"] = "pass" if verdict_raw == "pass" else "revise"
 
-    # Override verdict with deterministic rule — model can be overridden if scores say so.
+    # Deterministic override — code enforces the rule, model cannot cheat.
     if not scores.all_pass():
         verdict = "revise"
 
@@ -241,61 +228,52 @@ def _parse_critic_response(raw: str) -> CriticResult:
 # CriticAgent                                                          #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
 
-
-class CriticAgent:
+class CriticAgent(BaseAgent):
     """LLM-based critic that reviews a BlogJob and returns a pass/revise verdict.
+
+    Extends BaseAgent: reads skills/critic.md as system prompt, uses think()
+    for the sole LLM call.  No direct google-genai imports here.
 
     Args:
         config: BrewPressConfig with google_api_key set.
         model:  Gemini model name.
-
-    Example:
-        config = load_config(required=("GOOGLE_API_KEY",))
-        critic = CriticAgent(config)
-        result = critic.review(job)
-        if not result.is_pass():
-            job = gate.revise(result.revision_instruction)
     """
 
-    def __init__(self, config: BrewPressConfig, model: str = _DEFAULT_MODEL) -> None:
-        if not config.google_api_key:
-            raise ValueError(
-                "CriticAgent requires GOOGLE_API_KEY. "
-                "Set the environment variable and retry."
-            )
-        from google import genai
-        from google.genai import types as _types
-
-        self._client = genai.Client(api_key=config.google_api_key)
-        self._model = model
-        self._types = _types
+    SKILL: str | Path = "skills/critic.md"
+    TOOLS: list[str] = []  # deterministic checks done by caller; critic is pure LLM
 
     def review(self, job: BlogJob) -> CriticResult:
         """Evaluate a BlogJob draft and return a structured verdict.
 
         Args:
-            job: BlogJob in any state (DRAFT or REVIEWED recommended).
+            job: BlogJob in any state (DRAFT recommended).
 
         Returns:
             CriticResult with verdict, scores, failures, and revision_instruction.
 
         Raises:
-            ValueError: If the model response cannot be parsed.
+            ValueError: GOOGLE_API_KEY not set, or model response cannot be parsed.
         """
         prompt = _build_critic_prompt(job)
+        raw = self.think(prompt, temperature=0.2, max_output_tokens=2048, response_schema=_CriticSchema)
+        result = _parse_critic_response(raw)
 
-        response = self._client.models.generate_content(
-            model=self._model,
-            contents=prompt,
-            config=self._types.GenerateContentConfig(
-                system_instruction=_CRITIC_SYSTEM_PROMPT,
-                response_mime_type="application/json",
-                temperature=0.2,  # low temperature for consistent scoring
-                max_output_tokens=1024,
-            ),
+        # Deterministic overrides — code enforces quality signals the LLM can't reliably measure.
+        score_updates: dict[str, int] = {
+            "publish_readiness": _compute_publish_readiness(job),
+        }
+        if job.seo_score is not None:
+            score_updates["seo_quality"] = _seo_score_to_quality(job.seo_score)
+
+        updated_scores = result.scores.model_copy(update=score_updates)
+        verdict = result.verdict
+        if not updated_scores.all_pass():
+            verdict = "revise"
+
+        return CriticResult(
+            verdict=verdict,
+            revision_instruction=result.revision_instruction,
+            scores=updated_scores,
+            failures=result.failures,
         )
-
-        raw = response.text or ""
-        return _parse_critic_response(raw)
