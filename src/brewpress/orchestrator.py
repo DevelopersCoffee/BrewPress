@@ -318,13 +318,36 @@ class Orchestrator:
         featured_media_id: int | None = None
         if job.is_code_post:
             media_dir = self._media_base / job.job_id
-            screenshots = sorted(media_dir.glob("terminal_*.png")) if media_dir.is_dir() else []
-            if screenshots:
+            # Prefer output_*.png (command result) over terminal_*.png (command
+            # line, duplicates the body's code block). Single directory scan
+            # avoids a TOCTOU race between two glob calls; we partition the
+            # results in-process.
+            output_shots: list[Path] = []
+            terminal_shots: list[Path] = []
+            if media_dir.is_dir():
+                for entry in sorted(media_dir.iterdir()):
+                    if entry.suffix.lower() != ".png" or not entry.is_file():
+                        continue
+                    if entry.name.startswith("output_"):
+                        output_shots.append(entry)
+                    elif entry.name.startswith("terminal_"):
+                        terminal_shots.append(entry)
+            # Try output first; if upload fails, fall back to terminal so a
+            # bad output proof never suppresses the hero entirely.
+            for candidate in (output_shots[:1] + terminal_shots[:1]):
                 try:
-                    hero = client.upload_image_file(screenshots[0])
+                    hero = client.upload_image_file(candidate)
                     featured_media_id = hero.id
+                    break
                 except PublishError:
-                    pass
+                    continue
+
+        # Strip pipeline-scaffolding sections (executed-tutorial JSON manifest,
+        # exec-proof exit-code block, screenshot plan) from body before publish.
+        from brewpress.publish_sanitizer import sanitize_body_for_publish
+        sanitized_body = sanitize_body_for_publish(job.draft_body_md)
+        if sanitized_body != job.draft_body_md:
+            job = job.model_copy(update={"draft_body_md": sanitized_body})
 
         gallery_media: list[UploadedMedia] = []
         for media_path in (extra_media_paths or []):
