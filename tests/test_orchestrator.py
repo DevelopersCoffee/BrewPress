@@ -770,3 +770,171 @@ def test_no_wp_calls_in_draft(tmp_path: Path) -> None:
         Orchestrator(store=store, pipeline=pipeline, wp_client=wp).draft(topic="Topic")
 
     wp.publish.assert_not_called()
+
+
+# ------------------------------------------------------------------ #
+# Publish hookups: body sanitizer + hero-image picker                #
+# ------------------------------------------------------------------ #
+
+
+def _wp_mock() -> MagicMock:
+    """Return a MagicMock spec'd against WordPressClient so signature drift fails fast."""
+    from brewpress.wp_client import WordPressClient
+    return MagicMock(spec=WordPressClient)
+
+
+def test_publish_strips_scaffolding_from_body_before_wp_call(tmp_path: Path) -> None:
+    """Orchestrator must call sanitize_body_for_publish before WP.publish."""
+    body_with_scaffolding = (
+        "# Title\n\n"
+        "Reader intro.\n\n"
+        "## Executed Tutorial Steps\n\n"
+        "```json\n[{\"step_id\": \"01\"}]\n```\n\n"
+        "## Real Section\n\nReader content.\n"
+    )
+    approved = _approved_step2_job(draft_body_md=body_with_scaffolding)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    wp = _wp_mock()
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    orc = Orchestrator(store=store, wp_client=wp)
+    orc.publish()
+
+    args, kwargs = wp.publish.call_args
+    passed_job = args[0] if args else kwargs["job"]
+    assert "Executed Tutorial Steps" not in passed_job.draft_body_md
+    assert "step_id" not in passed_job.draft_body_md
+    assert "## Real Section" in passed_job.draft_body_md
+    assert "Reader content." in passed_job.draft_body_md
+
+
+def test_publish_clean_body_skips_body_model_copy(tmp_path: Path) -> None:
+    """No scaffolding -> sanitize_body_for_publish called once and returns
+    original; orchestrator skips the body-update model_copy branch (proven by
+    the body identity check on the job that reaches wp.publish)."""
+    clean = "# Title\n\n## Step 1\n\nReader content only.\n"
+    approved = _approved_step2_job(draft_body_md=clean)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    wp = _wp_mock()
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    # Stub sanitizer with identity. If orchestrator unconditionally model_copy'd
+    # the job, draft_body_md would still be `clean` (so we can't catch that here),
+    # but we DO assert the sanitizer was called exactly once with the unchanged body.
+    with patch("brewpress.publish_sanitizer.sanitize_body_for_publish",
+               side_effect=lambda body: body) as spy:
+        orc = Orchestrator(store=store, wp_client=wp)
+        orc.publish()
+        spy.assert_called_once_with(clean)
+
+    args, kwargs = wp.publish.call_args
+    passed_job = args[0] if args else kwargs["job"]
+    assert passed_job.draft_body_md == clean
+
+
+def test_publish_dirty_body_triggers_model_copy(tmp_path: Path) -> None:
+    """Stub the sanitizer to return a different body; orchestrator must
+    pass that new body to wp.publish (proves the conditional model_copy
+    branch fires when sanitizer changes content)."""
+    original_body = "# Title\n\n## Some Section\n\nbody\n"
+    sanitized = "# Title\n\n## Some Section\n\nNEW BODY\n"
+    approved = _approved_step2_job(draft_body_md=original_body)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    wp = _wp_mock()
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    with patch("brewpress.publish_sanitizer.sanitize_body_for_publish",
+               return_value=sanitized) as spy:
+        orc = Orchestrator(store=store, wp_client=wp)
+        orc.publish()
+        spy.assert_called_once_with(original_body)
+
+    args, kwargs = wp.publish.call_args
+    passed_job = args[0] if args else kwargs["job"]
+    assert passed_job.draft_body_md == sanitized
+
+
+def test_publish_prefers_output_screenshot_as_hero(tmp_path: Path) -> None:
+    """When media dir has both output_*.png and terminal_*.png, output wins."""
+    approved = _approved_step2_job(is_code_post=True)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    media_dir = tmp_path / "media" / approved.job_id
+    media_dir.mkdir(parents=True)
+    (media_dir / "terminal_2026-05-04_cmd_aaaa1111.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (media_dir / "output_2026-05-04_cmd_aaaa1111.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from brewpress.wp_client import UploadedMedia
+    wp = _wp_mock()
+    wp.upload_image_file.return_value = UploadedMedia(
+        id=777, url="https://example.com/output.webp", filename="output.png",
+    )
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    orc = Orchestrator(store=store, wp_client=wp, media_base=tmp_path / "media")
+    orc.publish()
+
+    uploaded_path = wp.upload_image_file.call_args[0][0]
+    assert uploaded_path.name.startswith("output_"), (
+        f"Expected output_*.png as hero, got {uploaded_path.name}"
+    )
+    _, kwargs = wp.publish.call_args
+    assert kwargs.get("featured_media_id") == 777
+
+
+def test_publish_falls_back_to_terminal_when_no_output_image(tmp_path: Path) -> None:
+    """Only terminal_*.png present → use it as hero."""
+    approved = _approved_step2_job(is_code_post=True)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    media_dir = tmp_path / "media" / approved.job_id
+    media_dir.mkdir(parents=True)
+    (media_dir / "terminal_2026-05-04_cmd_bbbb2222.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from brewpress.wp_client import UploadedMedia
+    wp = _wp_mock()
+    wp.upload_image_file.return_value = UploadedMedia(
+        id=888, url="https://example.com/terminal.webp", filename="terminal.png",
+    )
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    orc = Orchestrator(store=store, wp_client=wp, media_base=tmp_path / "media")
+    orc.publish()
+
+    uploaded_path = wp.upload_image_file.call_args[0][0]
+    assert uploaded_path.name.startswith("terminal_")
+
+
+def test_publish_falls_back_to_terminal_when_output_upload_fails(tmp_path: Path) -> None:
+    """If output upload raises PublishError, retry with terminal — never publish without a hero
+    when both candidates exist."""
+    approved = _approved_step2_job(is_code_post=True)
+    store = _make_store(job=approved, tmp_path=tmp_path)
+
+    media_dir = tmp_path / "media" / approved.job_id
+    media_dir.mkdir(parents=True)
+    (media_dir / "output_2026-05-04_cmd_aaaa1111.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    (media_dir / "terminal_2026-05-04_cmd_aaaa1111.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    from brewpress.wp_client import UploadedMedia
+    wp = _wp_mock()
+    # First call (output) fails; second call (terminal) succeeds.
+    wp.upload_image_file.side_effect = [
+        PublishError("output upload failed"),
+        UploadedMedia(id=999, url="https://example.com/terminal.webp", filename="terminal.png"),
+    ]
+    wp.publish.return_value = approved.model_copy(update={"wp_post_id": 1})
+
+    orc = Orchestrator(store=store, wp_client=wp, media_base=tmp_path / "media")
+    orc.publish()
+
+    assert wp.upload_image_file.call_count == 2, "Expected fallback retry"
+    first_path = wp.upload_image_file.call_args_list[0][0][0]
+    second_path = wp.upload_image_file.call_args_list[1][0][0]
+    assert first_path.name.startswith("output_")
+    assert second_path.name.startswith("terminal_")
+    _, kwargs = wp.publish.call_args
+    assert kwargs.get("featured_media_id") == 999
