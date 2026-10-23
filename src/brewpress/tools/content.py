@@ -70,7 +70,7 @@ def extract_code_blocks(body: str) -> list[dict[str, Any]]:
     """
     blocks = []
     for lang, code in _CODE_FENCE_RE.findall(body):
-        lines = [l for l in code.splitlines() if l.strip()]
+        lines = [line for line in code.splitlines() if line.strip()]
         blocks.append({
             "language": lang.strip() or None,
             "code": code.strip(),
