@@ -1,5 +1,7 @@
 import pytest
 from pydantic import ValidationError
+
+from brewpress.config import DEFAULT_GEMINI_MODEL
 from brewpress.models import BlogJob
 from brewpress.models.engagement_models import (
     PublishDecision, VersioningInfo, EngagementScoreData,
@@ -27,7 +29,7 @@ def test_engagement_score_data_defaults():
 def test_versioning_info_has_timestamp():
     info = VersioningInfo()
     assert info.timestamp is not None
-    assert info.model == "gemini-2.0-flash"
+    assert info.model == DEFAULT_GEMINI_MODEL
 
 
 # ============================================================================

@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
+from brewpress.config import gemini_model
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -31,7 +32,7 @@ class VersioningInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
     prompt_version: str = "v1.0"
     tool_version: dict[str, str] = Field(default_factory=dict)
-    model: str = "gemini-2.0-flash"
+    model: str = Field(default_factory=gemini_model)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 class ExecutionData(BaseModel):

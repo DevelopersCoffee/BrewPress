@@ -15,6 +15,8 @@ Optional customization variables (never required):
                           (default: "my technical blog")
     BREWPRESS_SITE_FOCUS  Topic focus for draft generation
                           (default: "backend development")
+    BREWPRESS_MODEL       Gemini model id for all agents (default: see
+                          DEFAULT_GEMINI_MODEL)
 """
 
 from __future__ import annotations
@@ -22,6 +24,31 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+# Default text model for agents. Google recommends gemini-3.8-flash for new
+# projects (see Gemini API deprecations / models docs).
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
+
+# Shutdown Gemini model ids — seeded from Google's deprecation schedule:
+# https://ai.google.dev/gemini-api/docs/deprecations (Gemini 2.0 models table)
+RETIRED_GEMINI_MODEL_IDS: frozenset[str] = frozenset(
+    {
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-001",
+        "gemini-2.0-flash-lite",
+        "gemini-2.0-flash-lite-001",
+        "gemini-2.0-flash-lite-preview",
+        "gemini-2.0-flash-lite-preview-02-05",
+    }
+)
+
+
+def gemini_model() -> str:
+    """Return the Gemini model id, honoring BREWPRESS_MODEL when set."""
+    _load_dotenv()
+    override = os.environ.get("BREWPRESS_MODEL", "").strip()
+    return override or DEFAULT_GEMINI_MODEL
+
 
 _ALL_VARS: tuple[str, ...] = (
     "WP_URL",

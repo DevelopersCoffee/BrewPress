@@ -33,13 +33,12 @@ make LLM usage visible in code review.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
-from brewpress.config import BrewPressConfig
+from brewpress.config import BrewPressConfig, gemini_model
 
 
 def _is_retryable_llm_error(exc: BaseException) -> bool:
@@ -87,9 +86,6 @@ def _find_skill(relative: str | Path) -> Path:
 # BaseAgent                                                            #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_MODEL = os.environ.get("BREWPRESS_MODEL", "gemini-2.0-flash")
-
-
 class BaseAgent:
     """Thin skill-driven agent.
 
@@ -113,10 +109,10 @@ class BaseAgent:
         self,
         config: BrewPressConfig,
         skill_path: str | Path | None = None,
-        model: str = _DEFAULT_MODEL,
+        model: str | None = None,
     ) -> None:
         self._config = config
-        self._model = model
+        self._model = model if model is not None else gemini_model()
         self._skill_path = _find_skill(skill_path or self.SKILL)
         self._skill_text: str | None = None   # lazy
         self._llm_client: Any = None           # lazy — only init if think() is called
