@@ -88,7 +88,8 @@ class StructurerAgent(BaseAgent):
             data: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise ValueError(
-                f"StructurerAgent returned invalid JSON: {exc}\n\nRaw (first 500 chars):\n{raw[:500]}"
+                f"StructurerAgent returned invalid JSON: {exc}\n\n"
+                f"Raw (first 500 chars):\n{raw[:500]}"
             ) from exc
 
         new_body = str(data.get("draft_body_md") or "").strip()

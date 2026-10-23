@@ -9,7 +9,12 @@ from pathlib import Path
 import pytest
 
 from brewpress.models import BlogJob, JobIntent, JobState
-from brewpress.review_gate import ReviewGate, format_draft
+from brewpress.review_gate import (
+    QualityGateError,
+    ReviewGate,
+    _effective_quality_score,
+    format_draft,
+)
 from brewpress.state_store import StateStore
 
 # ------------------------------------------------------------------ #
@@ -263,7 +268,7 @@ def test_approve_content_raises_below_min_quality_score(tmp_path: Path) -> None:
     """Quality gate: score below threshold must block content approval."""
     reviewed = _draft_job(quality_score=59).mark_reviewed()
     gate = _gate(tmp_path, reviewed)
-    with pytest.raises(ValueError, match="60"):
+    with pytest.raises(QualityGateError, match="60"):
         gate.approve_content()
 
 
@@ -275,12 +280,59 @@ def test_approve_content_passes_at_min_quality_score(tmp_path: Path) -> None:
     assert job.state == JobState.APPROVED_STEP_1
 
 
-def test_approve_content_passes_when_quality_score_is_none(tmp_path: Path) -> None:
-    """No score set → quality gate is skipped (not all drafts have scored quality)."""
-    reviewed = _draft_job(quality_score=None).mark_reviewed()
+def test_approve_content_passes_above_min_quality_score(tmp_path: Path) -> None:
+    reviewed = _draft_job(quality_score=85).mark_reviewed()
     gate = _gate(tmp_path, reviewed)
     job = gate.approve_content()
     assert job.state == JobState.APPROVED_STEP_1
+
+
+def test_approve_content_raises_when_quality_score_is_none(tmp_path: Path) -> None:
+    reviewed = _draft_job(quality_score=None).mark_reviewed()
+    gate = _gate(tmp_path, reviewed)
+    with pytest.raises(QualityGateError, match="missing or invalid"):
+        gate.approve_content()
+
+
+def test_approve_content_raises_when_quality_score_missing(tmp_path: Path) -> None:
+    """Unset quality_score (default None) must block approval."""
+    reviewed = _draft_job().model_copy(update={"quality_score": None}).mark_reviewed()
+    gate = _gate(tmp_path, reviewed)
+    with pytest.raises(QualityGateError, match="missing or invalid"):
+        gate.approve_content()
+
+
+@pytest.mark.parametrize(
+    "invalid_score",
+    [101, -1, float("nan")],
+)
+def test_approve_content_raises_when_quality_score_invalid(
+    tmp_path: Path, invalid_score: object
+) -> None:
+    reviewed = BlogJob.model_construct(
+        **_draft_job().model_dump() | {"quality_score": invalid_score, "state": JobState.REVIEWED}
+    )
+    gate = _gate(tmp_path, reviewed)
+    with pytest.raises(QualityGateError, match="missing or invalid"):
+        gate.approve_content()
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (None, None),
+        (59, 59),
+        (60, 60),
+        (100, 100),
+        (101, None),
+        (-1, None),
+        (float("nan"), None),
+        ("70", None),
+        (True, None),
+    ],
+)
+def test_effective_quality_score_normalization(raw: object, expected: int | None) -> None:
+    assert _effective_quality_score(raw) == expected  # type: ignore[arg-type]
 
 
 # ------------------------------------------------------------------ #

@@ -34,7 +34,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from brewpress.agent_base import BaseAgent
-from brewpress.config import BrewPressConfig
 from brewpress.models import BlogJob
 
 # ------------------------------------------------------------------ #
@@ -256,7 +255,12 @@ class CriticAgent(BaseAgent):
             ValueError: GOOGLE_API_KEY not set, or model response cannot be parsed.
         """
         prompt = _build_critic_prompt(job)
-        raw = self.think(prompt, temperature=0.2, max_output_tokens=2048, response_schema=_CriticSchema)
+        raw = self.think(
+            prompt,
+            temperature=0.2,
+            max_output_tokens=2048,
+            response_schema=_CriticSchema,
+        )
         result = _parse_critic_response(raw)
 
         # Deterministic overrides — code enforces quality signals the LLM can't reliably measure.

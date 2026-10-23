@@ -18,7 +18,8 @@ All registered tools are auto-imported when this package is first loaded.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # ------------------------------------------------------------------ #
 # Registry                                                             #
@@ -67,4 +68,4 @@ def list_tools() -> list[str]:
 # Auto-import all tool modules so decorators run                       #
 # ------------------------------------------------------------------ #
 
-from brewpress.tools import seo, content  # noqa: E402, F401
+from brewpress.tools import content, seo  # noqa: E402, F401
