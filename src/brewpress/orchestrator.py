@@ -47,10 +47,10 @@ from brewpress.wp_client import (
 )
 
 if TYPE_CHECKING:
-    from brewpress.writer_agent import WriterAgent
-    from brewpress.structurer_agent import StructurerAgent
-    from brewpress.seo_agent import SEOAgent
     from brewpress.critic_agent import CriticAgent
+    from brewpress.seo_agent import SEOAgent
+    from brewpress.structurer_agent import StructurerAgent
+    from brewpress.writer_agent import WriterAgent
 
 MAX_REVISIONS: int = 3
 
@@ -72,10 +72,10 @@ class PipelineAgents:
     draft() call time.
     """
 
-    writer: "WriterAgent | None" = field(default=None)
-    structurer: "StructurerAgent | None" = field(default=None)
-    seo: "SEOAgent | None" = field(default=None)
-    critic: "CriticAgent | None" = field(default=None)
+    writer: WriterAgent | None = field(default=None)
+    structurer: StructurerAgent | None = field(default=None)
+    seo: SEOAgent | None = field(default=None)
+    critic: CriticAgent | None = field(default=None)
 
 
 # ------------------------------------------------------------------ #
@@ -250,10 +250,10 @@ class Orchestrator:
                 "or a BrewPressConfig with GOOGLE_API_KEY."
             )
 
-        from brewpress.writer_agent import WriterAgent
-        from brewpress.structurer_agent import StructurerAgent
-        from brewpress.seo_agent import SEOAgent
         from brewpress.critic_agent import CriticAgent
+        from brewpress.seo_agent import SEOAgent
+        from brewpress.structurer_agent import StructurerAgent
+        from brewpress.writer_agent import WriterAgent
 
         return PipelineAgents(
             writer=WriterAgent(config),

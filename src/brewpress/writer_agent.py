@@ -21,7 +21,6 @@ from typing import Any
 from pydantic import BaseModel
 
 from brewpress.agent_base import BaseAgent
-from brewpress.config import BrewPressConfig
 from brewpress.models import BlogJob
 from brewpress.work_ingestion import WorkContext
 
@@ -143,6 +142,10 @@ class WriterAgent(BaseAgent):
             hook=str(data.get("hook") or ""),
             cta=str(data.get("cta") or ""),
             is_single_topic=is_single,
-            quality_score=int(data["quality_score"]) if data.get("quality_score") is not None else None,
+            quality_score=(
+                int(data["quality_score"])
+                if data.get("quality_score") is not None
+                else None
+            ),
             quality_gaps=list(data.get("quality_gaps") or []),
         )
