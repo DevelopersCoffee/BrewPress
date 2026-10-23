@@ -29,7 +29,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from brewpress.config import BrewPressConfig
+from brewpress.config import BrewPressConfig, gemini_model
 
 # ------------------------------------------------------------------ #
 # Version                                                              #
@@ -330,9 +330,6 @@ def _parse_boost_response(raw: str, task_type: TaskType) -> BoostResult:
 # BlogBoostAgent                                                       #
 # ------------------------------------------------------------------ #
 
-_DEFAULT_MODEL = "gemini-2.0-flash"
-
-
 class BlogBoostAgent:
     """Content optimization agent for blog posts.
 
@@ -347,7 +344,7 @@ class BlogBoostAgent:
         print(result.seo_suggestions.meta_description)
     """
 
-    def __init__(self, config: BrewPressConfig, model: str = _DEFAULT_MODEL) -> None:
+    def __init__(self, config: BrewPressConfig, model: str | None = None) -> None:
         if not config.google_api_key:
             raise ValueError(
                 "BlogBoostAgent requires GOOGLE_API_KEY. "
@@ -357,7 +354,7 @@ class BlogBoostAgent:
         from google.genai import types as _types
 
         self._client = genai.Client(api_key=config.google_api_key)
-        self._model = model
+        self._model = model if model is not None else gemini_model()
         self._types = _types
 
     def run(self, request: BoostRequest) -> BoostResult:

@@ -3,6 +3,9 @@ from typing import Optional, List, Dict
 from datetime import datetime, UTC
 from enum import Enum
 
+from brewpress.config import gemini_model
+
+
 class PublishDecision(str, Enum):
     APPROVED = "approved"
     PUBLISH_WITH_IMPROVEMENTS = "publish_with_improvements"
@@ -27,7 +30,7 @@ class VersioningInfo(BaseModel):
     model_config = ConfigDict(frozen=True)
     prompt_version: str = "v1.0"
     tool_version: Dict[str, str] = Field(default_factory=dict)
-    model: str = "gemini-2.0-flash"
+    model: str = Field(default_factory=gemini_model)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 class ExecutionData(BaseModel):
