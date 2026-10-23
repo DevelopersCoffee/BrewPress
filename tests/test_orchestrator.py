@@ -607,6 +607,42 @@ def test_draft_without_auto_approve_returns_reviewed(tmp_path: Path) -> None:
     assert result.job.state == JobState.REVIEWED
 
 
+def test_draft_auto_approve_skips_when_quality_score_missing(tmp_path: Path) -> None:
+    pipeline = _make_pipeline(draft_job=_job(quality_score=None))
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest:
+        ctx = MagicMock()
+        ctx.is_code_post = False
+        ctx.commands = []
+        mock_ingest.return_value = ctx
+
+        result = Orchestrator(store=store, pipeline=pipeline).draft(
+            topic="Topic", auto_approve=True
+        )
+
+    assert result.job.state == JobState.REVIEWED
+
+
+def test_draft_auto_approve_skips_when_quality_score_below_threshold(
+    tmp_path: Path,
+) -> None:
+    pipeline = _make_pipeline(draft_job=_job(quality_score=55))
+    store = _make_store(tmp_path=tmp_path)
+
+    with patch("brewpress.orchestrator.ingest") as mock_ingest:
+        ctx = MagicMock()
+        ctx.is_code_post = False
+        ctx.commands = []
+        mock_ingest.return_value = ctx
+
+        result = Orchestrator(store=store, pipeline=pipeline).draft(
+            topic="Topic", auto_approve=True
+        )
+
+    assert result.job.state == JobState.REVIEWED
+
+
 # ------------------------------------------------------------------ #
 # Orchestrator.publish() — happy path                                  #
 # ------------------------------------------------------------------ #

@@ -36,7 +36,7 @@ from brewpress.config import BrewPressConfig
 from brewpress.execution_layer import run_commands
 from brewpress.media_agent import generate_for_code_post, validate_code_post_media
 from brewpress.models import BlogJob
-from brewpress.review_gate import ReviewGate
+from brewpress.review_gate import QualityGateError, ReviewGate
 from brewpress.state_store import StateStore
 from brewpress.wordpress.agent import WordPressAgent
 from brewpress.work_ingestion import ingest
@@ -218,7 +218,11 @@ class Orchestrator:
         reviewed_job = gate.review()
 
         if auto_approve:
-            reviewed_job = gate.approve_content()
+            try:
+                reviewed_job = gate.approve_content()
+            except QualityGateError:
+                # Missing/invalid score or below threshold — stay on human review path.
+                pass
 
         return DraftResult(
             job=reviewed_job,

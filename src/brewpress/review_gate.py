@@ -24,8 +24,34 @@ once the full pipeline is wired. StateStore provides the session context.
 
 from __future__ import annotations
 
+import math
+from numbers import Real
+
 from brewpress.models import BlogJob, JobState
 from brewpress.state_store import StateStore
+
+
+class QualityGateError(ValueError):
+    """Content approval blocked because quality_score is missing or invalid."""
+
+
+def _effective_quality_score(score: int | None) -> int | None:
+    """Return a usable 0–100 quality score, or None if missing/invalid."""
+    if score is None:
+        return None
+    if isinstance(score, bool):
+        return None
+    if isinstance(score, Real) and not isinstance(score, int):
+        if isinstance(score, float) and math.isnan(score):
+            return None
+        if not float(score).is_integer():
+            return None
+        score = int(score)
+    elif not isinstance(score, int):
+        return None
+    if score < 0 or score > 100:
+        return None
+    return score
 
 # ------------------------------------------------------------------ #
 # Display formatting                                                   #
@@ -169,16 +195,20 @@ class ReviewGate:
 
         Raises:
             FileNotFoundError: No draft exists.
-            ValueError: Job is not in REVIEWED state, or quality_score is
-                        below the minimum threshold.
+            QualityGateError: quality_score is missing, invalid, or below threshold.
+            ValueError: Job is not in REVIEWED state.
         """
         job = self._store.load()
-        if (
-            job.quality_score is not None
-            and job.quality_score < self.MIN_QUALITY_SCORE
-        ):
-            raise ValueError(
-                f"Quality score {job.quality_score}/100 is below the minimum "
+        effective = _effective_quality_score(job.quality_score)
+        if effective is None:
+            raise QualityGateError(
+                "Quality score is missing or invalid. Run 'brewpress review' "
+                "after generation (or 'brewpress revise' to improve the draft) "
+                "before approving content."
+            )
+        if effective < self.MIN_QUALITY_SCORE:
+            raise QualityGateError(
+                f"Quality score {effective}/100 is below the minimum "
                 f"{self.MIN_QUALITY_SCORE}. Run 'brewpress revise' to improve "
                 "the draft before approving."
             )
