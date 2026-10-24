@@ -1,8 +1,9 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from brewpress.config import gemini_model
 from pydantic import BaseModel, ConfigDict, Field
+
+from brewpress.config import gemini_model
 
 
 class PublishDecision(StrEnum):
